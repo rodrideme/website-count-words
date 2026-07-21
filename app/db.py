@@ -72,6 +72,15 @@ async def _ensure_columns() -> None:
     if "login_blocked_count" not in existing:
         await conn.execute("ALTER TABLE runs ADD COLUMN login_blocked_count INTEGER NOT NULL DEFAULT 0")
         await conn.commit()
+    if "domain_scope" not in existing:
+        await conn.execute("ALTER TABLE runs ADD COLUMN domain_scope TEXT NOT NULL DEFAULT 'all'")
+        await conn.commit()
+    if "language" not in existing:
+        await conn.execute("ALTER TABLE runs ADD COLUMN language TEXT")
+        await conn.commit()
+    if "language_auto_detected" not in existing:
+        await conn.execute("ALTER TABLE runs ADD COLUMN language_auto_detected INTEGER NOT NULL DEFAULT 0")
+        await conn.commit()
 
 
 async def close_db() -> None:
@@ -124,6 +133,9 @@ def _row_to_run(row: aiosqlite.Row) -> RunRecord:
         page_count=row["page_count"],
         limit_reached=bool(row["limit_reached"]),
         login_blocked_count=row["login_blocked_count"],
+        domain_scope=row["domain_scope"],
+        language=row["language"],
+        language_auto_detected=bool(row["language_auto_detected"]),
         pages=pages,
     )
 
@@ -154,6 +166,9 @@ async def save_run(
     pages: list[PageResult],
     limit_reached: bool,
     login_blocked_count: int = 0,
+    domain_scope: str = "all",
+    language: str | None = None,
+    language_auto_detected: bool = False,
 ) -> None:
     conn = _conn()
     now = datetime.now(timezone.utc).isoformat()
@@ -161,10 +176,14 @@ async def save_run(
     await conn.execute(
         """
         INSERT OR REPLACE INTO runs
-            (id, source_url, user_id, created_at, status, total_words, page_count, limit_reached, login_blocked_count, pages_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, source_url, user_id, created_at, status, total_words, page_count, limit_reached,
+             login_blocked_count, domain_scope, language, language_auto_detected, pages_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (run_id, source_url, user_id, now, status, total_words, len(pages), int(limit_reached), login_blocked_count, pages_json),
+        (
+            run_id, source_url, user_id, now, status, total_words, len(pages), int(limit_reached),
+            login_blocked_count, domain_scope, language, int(language_auto_detected), pages_json,
+        ),
     )
     await conn.commit()
 

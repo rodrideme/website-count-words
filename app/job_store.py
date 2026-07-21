@@ -16,7 +16,7 @@ class Job:
     source_url: str
     user_id: int
     max_pages: int
-    status: str = "starting"  # starting | crawling | completed | failed | cancelled
+    status: str = "starting"  # starting | crawling | completed | failed | cancelled | paused
     started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     pages: dict[str, PageResult] = field(default_factory=dict)
     login_blocked: dict[str, PageResult] = field(default_factory=dict)
@@ -26,6 +26,12 @@ class Job:
     subscribers: list[asyncio.Queue] = field(default_factory=list)
     cancel_requested: bool = False
     detected_language: str | None = None
+    domain_scope: str = "all"
+    language_setting: str | None = None
+    # BFSDeepCrawlStrategy's on_state_change snapshot — lets a paused crawl
+    # (see run_crawl's pause_at_words) resume later from the same frontier.
+    resume_state: dict | None = None
+    estimate_result: dict | None = None
 
     def request_cancel(self) -> None:
         # crawl4ai's BFS strategy is given a should_cancel callback that reads
@@ -47,6 +53,9 @@ class Job:
             "limit_reached": self.limit_reached,
             "error": self.error,
             "detected_language": self.detected_language,
+            "domain_scope": self.domain_scope,
+            "language_setting": self.language_setting,
+            "estimate_result": self.estimate_result,
         }
 
 

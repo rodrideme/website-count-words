@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
+from crawl4ai import AsyncUrlSeeder, AsyncWebCrawler, CrawlerRunConfig, SeedingConfig
 from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
 from crawl4ai.deep_crawling.filters import DomainFilter, FilterChain, URLFilter
 from crawl4ai.utils import get_base_domain
@@ -105,13 +105,21 @@ def _looks_like_language_segment(segment: str) -> bool:
     return len(code) == 2 and code in _ISO_639_1_CODES
 
 
+def parse_languages(language: str | None) -> list[str]:
+    """Parses the language field's comma-separated text into a list of
+    normalized codes, e.g. "en, pt, es, fr" -> ["en", "pt", "es", "fr"]."""
+    if not language:
+        return []
+    return [_lang_code(part) for part in language.split(",") if part.strip()]
+
+
 class LanguageFilter(URLFilter):
-    """Restricts a crawl to one language, for sites that publish the same
-    content under multiple /xx/ path prefixes. A URL is rejected only if its
-    first path segment looks like a *different* language code — a segment
-    that doesn't look like a language code at all is always allowed through,
-    so this works whether or not the site's primary/default language has its
-    own prefix.
+    """Restricts a crawl to one or more languages, for sites that publish the
+    same content under multiple /xx/ path prefixes. A URL is rejected only if
+    its first path segment looks like a language code that ISN'T in the kept
+    set — a segment that doesn't look like a language code at all is always
+    allowed through, so this works whether or not the site's primary/default
+    language has its own prefix.
 
     Heuristic, not exact: a two-letter path segment that happens to coincide
     with an ISO 639-1 code but isn't actually a language marker (e.g. a
@@ -120,9 +128,9 @@ class LanguageFilter(URLFilter):
     anti-bot detection).
     """
 
-    def __init__(self, keep_language: str):
+    def __init__(self, keep_languages: list[str]):
         super().__init__(name="LanguageFilter")
-        self._keep = _lang_code(keep_language)
+        self._keep = {_lang_code(l) for l in keep_languages if l.strip()}
 
     def apply(self, url: str) -> bool:
         segments = urlparse(url).path.split("/")
@@ -130,7 +138,7 @@ class LanguageFilter(URLFilter):
         if not _looks_like_language_segment(first):
             passed = True
         else:
-            passed = _lang_code(first) == self._keep
+            passed = _lang_code(first) in self._keep
         self._update_stats(passed)
         return passed
 
@@ -148,6 +156,48 @@ def _detect_page_language(html: str | None) -> str | None:
         return None
     code = _lang_code(match.group(1))
     return code if len(code) == 2 and code in _ISO_639_1_CODES else None
+
+
+PAUSE_AT_WORDS = 100_000
+
+
+async def _discover_sitemap_page_count(url: str, filters: list[URLFilter]) -> int | None:
+    """Best-effort: how many pages does this site's sitemap list, after
+    applying the same domain/language filters the real crawl would use?
+    Returns None if no sitemap could be found — not every site has one, and
+    that's not an error, just a missing signal."""
+    hostname = urlparse(url).netloc
+    try:
+        async with AsyncUrlSeeder() as seeder:
+            config = SeedingConfig(source="sitemap", extract_head=False, live_check=False)
+            discovered = await seeder.urls(hostname, config)
+    except Exception:
+        return None
+    if not discovered:
+        return None
+    urls = [item["url"] for item in discovered if item.get("url")]
+    if filters:
+        urls = [u for u in urls if all(f.apply(u) for f in filters)]
+    return len(urls) if urls else None
+
+
+async def _build_estimate_result(job, url: str, filters: list[URLFilter]) -> dict:
+    pages_fetched = len(job.pages)
+    avg_words_per_page = job.total_words / pages_fetched if pages_fetched else 0
+    discovered_total = len(job.resume_state["visited"]) if job.resume_state else pages_fetched
+    sitemap_count = await _discover_sitemap_page_count(url, filters)
+    # The sitemap is usually the more complete number this early — the BFS
+    # traversal may not have reached deep enough yet to discover everything
+    # itself within the word budget.
+    total_pages_estimate = max(sitemap_count or 0, discovered_total)
+    return {
+        "pages_fetched": pages_fetched,
+        "discovered_total": discovered_total,
+        "sitemap_count": sitemap_count,
+        "total_pages_estimate": total_pages_estimate,
+        "avg_words_per_page": round(avg_words_per_page),
+        "estimated_total_words": round(avg_words_per_page * total_pages_estimate),
+    }
 
 
 def _is_login_wall(result) -> bool:
@@ -176,12 +226,16 @@ async def run_crawl(
     max_pages: int,
     domain_scope: str = "all",
     language: str | None = None,
+    pause_at_words: int | None = None,
+    resume_state: dict | None = None,
 ) -> None:
     job = get_job(job_id)
     if job is None:
         return
 
     job.status = "crawling"
+    job.domain_scope = domain_scope
+    job.language_setting = language
 
     # Crawls are always unlimited now, so the depth cap just needs to be high
     # enough not to cut off a legitimately deep site.
@@ -202,19 +256,23 @@ async def run_crawl(
     elif domain_scope == "top_domain_only":
         domain_filters.append(TopDomainOnlyFilter(get_base_domain(url)))
 
+    languages = parse_languages(language)
+
     try:
         async with AsyncWebCrawler() as crawler:
-            if not language:
-                # No language typed in — probe the start page's own <html
-                # lang> before configuring the crawl, so "blank" means
-                # "restrict to whatever language this page is in" rather
-                # than "no restriction at all". Best-effort: any failure
-                # here just falls through to the old no-restriction behavior.
+            if not languages and resume_state is None:
+                # No language typed in, and this isn't a resumed crawl (where
+                # the language was already resolved the first time around) —
+                # probe the start page's own <html lang> before configuring
+                # the crawl, so "blank" means "restrict to whatever language
+                # this page is in" rather than "no restriction at all".
+                # Best-effort: any failure here just falls through to the old
+                # no-restriction behavior.
                 try:
                     probe = await crawler.arun(url)
                     detected = _detect_page_language(getattr(probe, "html", None))
                     if detected:
-                        language = detected
+                        languages = [detected]
                         job.detected_language = detected
                 except Exception:
                     pass
@@ -222,21 +280,33 @@ async def run_crawl(
             job.publish(job.status_payload())
 
             filters = list(domain_filters)
-            if language:
-                filters.append(LanguageFilter(language))
+            if languages:
+                filters.append(LanguageFilter(languages))
             filter_chain = FilterChain(filters)
+
+            async def _on_state_change(state: dict) -> None:
+                # Lets a paused crawl resume later from exactly this frontier
+                # (see BFSDeepCrawlStrategy's resume_state parameter) and, in
+                # the meantime, gives an accurate "how many pages have we
+                # found links to" count for the pre-crawl estimate.
+                job.resume_state = state
 
             strategy = BFSDeepCrawlStrategy(
                 max_depth=max_depth,
                 max_pages=max_pages,
                 include_external=False,
                 filter_chain=filter_chain,
+                resume_state=resume_state,
+                on_state_change=_on_state_change,
                 # A should_cancel callback (rather than calling strategy.cancel())
                 # because _arun_stream() resets its internal cancel event right as it
                 # starts — calling cancel() before that point would be silently wiped
                 # out. The callback is re-read live on every check, so it works no
-                # matter when request_cancel() sets the flag.
-                should_cancel=lambda: job.cancel_requested,
+                # matter when request_cancel() sets the flag. Also doubles as the
+                # "pause this estimate crawl once it's sampled enough" trigger.
+                should_cancel=lambda: job.cancel_requested or (
+                    pause_at_words is not None and job.total_words >= pause_at_words
+                ),
             )
             config = CrawlerRunConfig(deep_crawl_strategy=strategy, stream=True)
 
@@ -300,20 +370,35 @@ async def run_crawl(
                 )
 
         job.limit_reached = len(job.pages) + len(job.login_blocked) >= max_pages
-        job.status = "cancelled" if job.cancel_requested else "completed"
+        if job.cancel_requested:
+            job.status = "cancelled"
+        elif pause_at_words is not None and job.total_words >= pause_at_words:
+            # Hit the pause threshold with the frontier still non-empty —
+            # this is a genuine pause, not a finish. If the site instead
+            # exhausted its own links before ever reaching the threshold,
+            # this branch is skipped entirely and it's just a normal
+            # completion below, exact rather than estimated.
+            job.status = "paused"
+            job.estimate_result = await _build_estimate_result(job, url, filters)
+        else:
+            job.status = "completed"
     except Exception as exc:
         job.status = "failed"
         job.error = str(exc)
 
     job.publish(job.status_payload())
 
-    await db.save_run(
-        run_id=job.id,
-        source_url=job.source_url,
-        user_id=job.user_id,
-        status=job.status,
-        total_words=job.total_words,
-        pages=list(job.pages.values()),
-        limit_reached=job.limit_reached,
-        login_blocked_count=len(job.login_blocked),
-    )
+    if job.status != "paused":
+        await db.save_run(
+            run_id=job.id,
+            source_url=job.source_url,
+            user_id=job.user_id,
+            status=job.status,
+            total_words=job.total_words,
+            pages=list(job.pages.values()),
+            limit_reached=job.limit_reached,
+            login_blocked_count=len(job.login_blocked),
+            domain_scope=job.domain_scope,
+            language=",".join(languages) if languages else None,
+            language_auto_detected=job.detected_language is not None,
+        )

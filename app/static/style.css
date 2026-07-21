@@ -273,6 +273,7 @@ ul.recent-runs a.run-row:hover { background: #FCFBF8; text-decoration: none; }
 .status-completed { background: var(--success-bg); color: var(--success-text); }
 .status-cancelled { background: var(--neutral-bg); color: var(--neutral-text); }
 .status-failed { background: var(--danger-bg); color: var(--danger-text); }
+.status-paused { background: var(--brand-tint); color: var(--brand); }
 
 .pulse-dot {
   width: 7px; height: 7px; border-radius: 50%;
@@ -294,6 +295,25 @@ ul.recent-runs a.run-row:hover { background: #FCFBF8; text-decoration: none; }
   word-break: break-all;
 }
 #run-date { font-size: 13px; color: var(--muted); margin: 0; }
+
+.settings-applied {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.settings-applied .section-label { margin: 0; }
+.pill {
+  display: inline-block;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+}
+.pill strong { font-family: var(--font-mono); }
 
 /* ---------- Sticky stats bar ---------- */
 .totals-bar {
@@ -379,6 +399,33 @@ ul.recent-runs a.run-row:hover { background: #FCFBF8; text-decoration: none; }
 .action-row input.language-input { width: 150px; height: 38px; }
 .action-row select { height: 38px; font-size: 12px; }
 .action-row button[type="submit"] { height: 38px; padding: 0 18px; font-size: 13px; }
+
+/* ---------- Pre-crawl estimate panel ---------- */
+.estimate-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 44px;
+  box-shadow: 0 1px 3px rgba(25, 23, 18, 0.05);
+}
+.estimate-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px;
+  margin: 14px 0;
+}
+@media (max-width: 640px) {
+  .estimate-stats { grid-template-columns: repeat(2, 1fr); }
+}
+.estimate-stat .muted {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.estimate-stat .big { font-family: var(--font-mono); font-size: 22px; font-weight: 700; margin-top: 4px; }
+#estimate-message { margin: 8px 0 16px; }
 
 /* ---------- Report grid: folders + top pages ---------- */
 .report-grid {

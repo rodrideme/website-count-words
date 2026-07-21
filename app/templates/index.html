@@ -24,7 +24,8 @@
         <option value="subdomain_only">This subdomain only</option>
         <option value="top_domain_only">Top-level domain only</option>
       </select>
-      <input type="text" id="language" class="language-input" placeholder="Primary language (auto)" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to auto-detect the starting page's language.">
+      <input type="text" id="language" class="language-input" placeholder="Primary language (auto)" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to auto-detect the starting page's language. Comma-separate multiple codes to keep more than one (e.g. en, pt, es).">
+      <button type="button" id="estimate-btn" class="secondary">Estimate first</button>
       <button type="submit" id="submit-btn">Crawl</button>
     </form>
     <p class="field-error" id="form-error" style="display:none;"></p>

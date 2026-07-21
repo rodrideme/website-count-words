@@ -25,6 +25,7 @@ function initHomeForm() {
   const form = document.getElementById("crawl-form");
   const errorEl = document.getElementById("form-error");
   const submitBtn = document.getElementById("submit-btn");
+  const estimateBtn = document.getElementById("estimate-btn");
   const urlInput = document.getElementById("url");
   const domainScopeSelect = document.getElementById("domain_scope");
   const languageInput = document.getElementById("language");
@@ -36,11 +37,12 @@ function initHomeForm() {
     }
   });
 
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
+  const startCrawl = async (estimate) => {
+    const triggerBtn = estimate ? estimateBtn : submitBtn;
     errorEl.style.display = "none";
     submitBtn.disabled = true;
-    submitBtn.textContent = "Starting…";
+    estimateBtn.disabled = true;
+    triggerBtn.textContent = estimate ? "Estimating…" : "Starting…";
 
     const url = urlInput.value;
     const domainScope = domainScopeSelect.value;
@@ -50,7 +52,7 @@ function initHomeForm() {
       const res = await fetch("/crawl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, domain_scope: domainScope, language }),
+        body: JSON.stringify({ url, domain_scope: domainScope, language, estimate }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -61,15 +63,25 @@ function initHomeForm() {
       errorEl.textContent = err.message;
       errorEl.style.display = "block";
       submitBtn.disabled = false;
+      estimateBtn.disabled = false;
       submitBtn.textContent = "Crawl";
+      estimateBtn.textContent = "Estimate first";
     }
+  };
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    startCrawl(false);
   });
+
+  estimateBtn.addEventListener("click", () => startCrawl(true));
 }
 
 function badgeClass(status) {
   if (status === "completed") return "status-badge status-completed";
   if (status === "failed") return "status-badge status-failed";
   if (status === "cancelled") return "status-badge status-cancelled";
+  if (status === "paused") return "status-badge status-paused";
   return "status-badge status-crawling";
 }
 
@@ -77,7 +89,36 @@ function statusLabel(status) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-const TERMINAL_STATUSES = ["completed", "failed", "cancelled"];
+const TERMINAL_STATUSES = ["completed", "failed", "cancelled", "paused"];
+
+const DOMAIN_SCOPE_LABELS = {
+  all: "Whole domain (incl. subdomains)",
+  subdomain_only: "This subdomain only",
+  top_domain_only: "Top-level domain only",
+};
+
+function parseLanguageList(text) {
+  if (!text) return [];
+  return text.split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function renderSettingsPills(domainScope, languages, autoDetected) {
+  const domainPill = document.getElementById("domain-scope-pill");
+  const languagePill = document.getElementById("language-pill");
+  if (domainPill) domainPill.textContent = DOMAIN_SCOPE_LABELS[domainScope] || domainScope;
+  if (!languagePill) return;
+  if (!languages.length) {
+    languagePill.textContent = "Languages: All";
+  } else if (languages.length === 1) {
+    languagePill.textContent = autoDetected ? `Language: ${languages[0]} (auto)` : `Language: ${languages[0]}`;
+    languagePill.innerHTML = autoDetected
+      ? `Language: <strong>${languages[0]}</strong> (auto)`
+      : `Language: <strong>${languages[0]}</strong>`;
+  } else {
+    const [primary, ...rest] = languages;
+    languagePill.innerHTML = `Languages: <strong>${primary}</strong> + ${rest.join(", ")}`;
+  }
+}
 
 function formatDate(iso) {
   if (!iso) return "";
@@ -211,6 +252,7 @@ function initCrawlPage(opts) {
   const errorBox = document.getElementById("error-box");
   const tbody = document.getElementById("page-tbody");
   const cancelBtn = document.getElementById("cancel-btn");
+  const actionRow = document.getElementById("action-row");
   const recrawlForm = document.getElementById("recrawl-form");
   const recrawlBtn = document.getElementById("recrawl-btn");
   const recrawlDomainScopeSelect = document.getElementById("recrawl-domain-scope");
@@ -219,6 +261,14 @@ function initCrawlPage(opts) {
   const runDateEl = document.getElementById("run-date");
   const detectedLanguageNote = document.getElementById("detected-language-note");
   const blockedHostEl = document.getElementById("blocked-host-count");
+  const estimatePanel = document.getElementById("estimate-panel");
+  const estimatePagesFetchedEl = document.getElementById("estimate-pages-fetched");
+  const estimateTotalPagesEl = document.getElementById("estimate-total-pages");
+  const estimateAvgWordsEl = document.getElementById("estimate-avg-words");
+  const estimateTotalWordsEl = document.getElementById("estimate-total-words");
+  const estimateMessageEl = document.getElementById("estimate-message");
+  const proceedBtn = document.getElementById("proceed-btn");
+  const adjustBtn = document.getElementById("adjust-btn");
 
   const updateBlockedHostCount = (pages) => {
     setStatCount(blockedHostEl, pages.filter((p) => p.blocked_by_host).length);
@@ -233,6 +283,28 @@ function initCrawlPage(opts) {
   const updatePageCount = (count) => {
     pageCountEl.textContent = count;
     pagesHeadingCountEl.textContent = count ? `— ${count.toLocaleString("en-US")} crawled` : "";
+  };
+
+  const updateSettingsPills = (domainScope, languageSetting, detectedLanguage) => {
+    const languages = languageSetting
+      ? parseLanguageList(languageSetting)
+      : detectedLanguage
+        ? [detectedLanguage]
+        : [];
+    renderSettingsPills(domainScope, languages, !languageSetting && !!detectedLanguage);
+  };
+
+  const showEstimatePanel = (result) => {
+    if (!result) return;
+    estimatePagesFetchedEl.textContent = result.pages_fetched.toLocaleString("en-US");
+    estimateTotalPagesEl.textContent = result.total_pages_estimate.toLocaleString("en-US");
+    estimateAvgWordsEl.textContent = result.avg_words_per_page.toLocaleString("en-US");
+    estimateTotalWordsEl.textContent = result.estimated_total_words.toLocaleString("en-US");
+    estimateMessageEl.textContent =
+      `This site has approximately ${result.total_pages_estimate.toLocaleString("en-US")} pages` +
+      " — crawling all of them may take a while.";
+    actionRow.style.display = "none";
+    estimatePanel.style.display = "block";
   };
 
   const suggestedLanguage = suggestLanguageFromUrl(opts.sourceUrl);
@@ -287,6 +359,7 @@ function initCrawlPage(opts) {
     totalWordsEl.textContent = opts.initialTotalWords.toLocaleString("en-US");
     updatePageCount(opts.initialPageCount);
     setStatCount(loginBlockedEl, opts.initialLoginBlockedCount || 0);
+    renderSettingsPills(opts.domainScope, parseLanguageList(opts.languageSetting), opts.languageAutoDetected);
     if (opts.initialLimitReached) showLimitNote();
     if (opts.initialStatus === "failed") showError();
     if (opts.initialStatus === "cancelled") cancelNote.style.display = "block";
@@ -304,44 +377,75 @@ function initCrawlPage(opts) {
   setStatus("starting");
   setStatCount(blockedHostEl, 0);
   cancelBtn.style.display = "";
+  const seenUrls = new Set();
   const pages = [];
-  const source = new EventSource("/events/" + opts.runId);
 
-  source.addEventListener("page", (evt) => {
-    const data = JSON.parse(evt.data);
-    pages.push(data.page);
-    renderPageRow(tbody, data.page);
-    totalWordsEl.textContent = data.total_words.toLocaleString("en-US");
-    updatePageCount(pages.length);
-    updateBlockedHostCount(pages);
+  proceedBtn.addEventListener("click", async () => {
+    proceedBtn.disabled = true;
+    proceedBtn.textContent = "Resuming…";
+    await fetch("/crawl/" + opts.runId + "/resume", { method: "POST" });
+    estimatePanel.style.display = "none";
+    actionRow.style.display = "";
+    cancelBtn.style.display = "";
+    setStatus("crawling");
+    connectEvents();
   });
 
-  source.addEventListener("login_blocked", (evt) => {
-    const data = JSON.parse(evt.data);
-    // Intentionally not rendered in the page list — just a running count of
-    // pages that turned out to be login walls rather than real content.
-    setStatCount(loginBlockedEl, data.login_blocked_count);
+  adjustBtn.addEventListener("click", () => {
+    window.location.href = "/";
   });
 
-  source.addEventListener("status", (evt) => {
-    const data = JSON.parse(evt.data);
-    setStatus(data.status);
-    totalWordsEl.textContent = data.total_words.toLocaleString("en-US");
-    updatePageCount(data.page_count);
-    setStatCount(loginBlockedEl, data.login_blocked_count);
-    showDetectedLanguage(data.detected_language);
-    if (data.limit_reached) showLimitNote();
-    if (data.status === "failed") showError(data.error);
-    if (data.status === "cancelled") cancelNote.style.display = "block";
-    if (TERMINAL_STATUSES.includes(data.status)) {
-      cancelBtn.style.display = "none";
-      renderSummary(pages);
-      source.close();
-    }
-  });
+  function connectEvents() {
+    const source = new EventSource("/events/" + opts.runId);
 
-  source.onerror = () => {
-    // EventSource auto-retries; if the job is already gone server-side this
-    // will just keep failing quietly, which is fine for a local dev tool.
-  };
+    source.addEventListener("page", (evt) => {
+      const data = JSON.parse(evt.data);
+      // A reconnect after "Proceed with crawl" replays every page already
+      // known before streaming new ones — skip anything already counted.
+      if (seenUrls.has(data.page.url)) return;
+      seenUrls.add(data.page.url);
+      pages.push(data.page);
+      renderPageRow(tbody, data.page);
+      totalWordsEl.textContent = data.total_words.toLocaleString("en-US");
+      updatePageCount(pages.length);
+      updateBlockedHostCount(pages);
+    });
+
+    source.addEventListener("login_blocked", (evt) => {
+      const data = JSON.parse(evt.data);
+      // Intentionally not rendered in the page list — just a running count of
+      // pages that turned out to be login walls rather than real content.
+      setStatCount(loginBlockedEl, data.login_blocked_count);
+    });
+
+    source.addEventListener("status", (evt) => {
+      const data = JSON.parse(evt.data);
+      setStatus(data.status);
+      totalWordsEl.textContent = data.total_words.toLocaleString("en-US");
+      updatePageCount(data.page_count);
+      setStatCount(loginBlockedEl, data.login_blocked_count);
+      showDetectedLanguage(data.detected_language);
+      updateSettingsPills(data.domain_scope, data.language_setting, data.detected_language);
+      if (data.limit_reached) showLimitNote();
+      if (data.status === "failed") showError(data.error);
+      if (data.status === "cancelled") cancelNote.style.display = "block";
+      if (TERMINAL_STATUSES.includes(data.status)) {
+        cancelBtn.style.display = "none";
+        renderSummary(pages);
+        source.close();
+        if (data.status === "paused") {
+          showEstimatePanel(data.estimate_result);
+        }
+      }
+    });
+
+    source.onerror = () => {
+      // EventSource auto-retries; if the job is already gone server-side this
+      // will just keep failing quietly, which is fine for a local dev tool.
+    };
+
+    return source;
+  }
+
+  connectEvents();
 }

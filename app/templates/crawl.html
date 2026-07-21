@@ -6,6 +6,11 @@
     <h1>{{ source_url }}</h1>
     <p id="run-date"></p>
     <p id="detected-language-note" class="muted" style="display:none;"></p>
+    <div class="settings-applied">
+      <span class="section-label">Settings applied</span>
+      <span class="pill" id="domain-scope-pill"></span>
+      <span class="pill" id="language-pill"></span>
+    </div>
   </div>
 
   <div class="totals-bar report-wrap">
@@ -36,7 +41,7 @@
     <p class="note" id="cancel-note" style="display:none;">This crawl was cancelled — showing partial results.</p>
     <p class="error-box" id="error-box" style="display:none;"></p>
 
-    <div class="action-row">
+    <div class="action-row" id="action-row">
       <button id="cancel-btn" class="danger-outline" style="display:none;">Cancel crawl</button>
       <button id="print-btn" class="secondary">Print report</button>
       <div class="divider-v"></div>
@@ -50,6 +55,33 @@
         <input type="text" id="recrawl-language" class="language-input" placeholder="Language (auto)" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to auto-detect the starting page's language.">
         <button type="submit" id="recrawl-btn" class="secondary">Re-crawl</button>
       </form>
+    </div>
+
+    <div class="estimate-panel" id="estimate-panel" style="display:none;">
+      <div class="section-label">Estimate — before you crawl</div>
+      <div class="estimate-stats">
+        <div class="estimate-stat">
+          <span class="muted">Pages fetched so far</span>
+          <div class="big" id="estimate-pages-fetched">0</div>
+        </div>
+        <div class="estimate-stat">
+          <span class="muted">Estimated total pages</span>
+          <div class="big" id="estimate-total-pages">0</div>
+        </div>
+        <div class="estimate-stat">
+          <span class="muted">Avg words / page</span>
+          <div class="big" id="estimate-avg-words">0</div>
+        </div>
+        <div class="estimate-stat">
+          <span class="muted">Estimated total</span>
+          <div class="big" id="estimate-total-words">0</div>
+        </div>
+      </div>
+      <p class="muted" id="estimate-message"></p>
+      <div style="display:flex; gap:8px;">
+        <button id="proceed-btn">Proceed with crawl</button>
+        <button id="adjust-btn" class="secondary">Adjust settings</button>
+      </div>
     </div>
 
     <div id="summary" style="display:none;">
@@ -96,6 +128,9 @@
       initialLimitReached: {{ run.limit_reached | tojson }},
       createdAt: {{ run.created_at | tojson }},
       initialPages: {{ initial_pages | tojson }},
+      domainScope: {{ run.domain_scope | tojson }},
+      languageSetting: {{ run.language | tojson }},
+      languageAutoDetected: {{ run.language_auto_detected | tojson }},
       {% endif %}
     });
   </script>

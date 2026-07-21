@@ -16,6 +16,7 @@
   .report-header a,
   .crawl-form,
   .action-row,
+  .estimate-panel,
   .google-btn,
   .field-error {
     display: none !important;
