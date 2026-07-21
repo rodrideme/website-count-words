@@ -25,6 +25,7 @@ class Job:
     limit_reached: bool = False
     subscribers: list[asyncio.Queue] = field(default_factory=list)
     cancel_requested: bool = False
+    detected_language: str | None = None
 
     def request_cancel(self) -> None:
         # crawl4ai's BFS strategy is given a should_cancel callback that reads
@@ -45,6 +46,7 @@ class Job:
             "login_blocked_count": len(self.login_blocked),
             "limit_reached": self.limit_reached,
             "error": self.error,
+            "detected_language": self.detected_language,
         }
 
 

@@ -12,10 +12,6 @@ services:
         sync: false
       - key: SESSION_SECRET
         generateValue: true
-      - key: DEFAULT_MAX_PAGES
-        value: "150"
-      - key: MAX_PAGES_HARD_CAP
-        value: "500"
       - key: DB_PATH
         value: /var/data/wordcount.db
     disk:

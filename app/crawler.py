@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
@@ -134,6 +135,21 @@ class LanguageFilter(URLFilter):
         return passed
 
 
+_HTML_LANG_RE = re.compile(r'<html[^>]+\blang=["\']([a-zA-Z0-9-]+)["\']', re.IGNORECASE)
+
+
+def _detect_page_language(html: str | None) -> str | None:
+    """Reads the page's own declared language (the same <html lang="..">
+    signal search engines and browsers rely on) so a blank language field
+    can mean "restrict to whatever language this page is in" instead of
+    "no restriction at all"."""
+    match = _HTML_LANG_RE.search(html or "")
+    if not match:
+        return None
+    code = _lang_code(match.group(1))
+    return code if len(code) == 2 and code in _ISO_639_1_CODES else None
+
+
 def _is_login_wall(result) -> bool:
     """Heuristic: crawl4ai has no dedicated "requires login" signal, so this
     combines the strongest hints available — an outright auth status code,
@@ -166,10 +182,10 @@ async def run_crawl(
         return
 
     job.status = "crawling"
-    job.publish(job.status_payload())
 
-    # An unlimited page cap shouldn't be cut short by an arbitrary depth cap either.
-    max_depth = 1000 if max_pages == float("inf") else 10
+    # Crawls are always unlimited now, so the depth cap just needs to be high
+    # enough not to cut off a legitimately deep site.
+    max_depth = 1000
 
     # By default crawl4ai treats any subdomain of the same registrable domain
     # (e.g. docs.example.com and www.example.com) as "internal", so the whole
@@ -179,32 +195,51 @@ async def run_crawl(
     # what pins it to that host and everything beneath it). "top_domain_only"
     # is the opposite restriction — root domain, but excluding other
     # subdomains — which needs the custom TopDomainOnlyFilter above.
-    filters: list[URLFilter] = []
+    domain_filters: list[URLFilter] = []
     if domain_scope == "subdomain_only":
         hostname = urlparse(url).netloc
-        filters.append(DomainFilter(allowed_domains=[hostname]))
+        domain_filters.append(DomainFilter(allowed_domains=[hostname]))
     elif domain_scope == "top_domain_only":
-        filters.append(TopDomainOnlyFilter(get_base_domain(url)))
-    if language:
-        filters.append(LanguageFilter(language))
-    filter_chain = FilterChain(filters)
-
-    strategy = BFSDeepCrawlStrategy(
-        max_depth=max_depth,
-        max_pages=max_pages,
-        include_external=False,
-        filter_chain=filter_chain,
-        # A should_cancel callback (rather than calling strategy.cancel())
-        # because _arun_stream() resets its internal cancel event right as it
-        # starts — calling cancel() before that point would be silently wiped
-        # out. The callback is re-read live on every check, so it works no
-        # matter when request_cancel() sets the flag.
-        should_cancel=lambda: job.cancel_requested,
-    )
-    config = CrawlerRunConfig(deep_crawl_strategy=strategy, stream=True)
+        domain_filters.append(TopDomainOnlyFilter(get_base_domain(url)))
 
     try:
         async with AsyncWebCrawler() as crawler:
+            if not language:
+                # No language typed in — probe the start page's own <html
+                # lang> before configuring the crawl, so "blank" means
+                # "restrict to whatever language this page is in" rather
+                # than "no restriction at all". Best-effort: any failure
+                # here just falls through to the old no-restriction behavior.
+                try:
+                    probe = await crawler.arun(url)
+                    detected = _detect_page_language(getattr(probe, "html", None))
+                    if detected:
+                        language = detected
+                        job.detected_language = detected
+                except Exception:
+                    pass
+
+            job.publish(job.status_payload())
+
+            filters = list(domain_filters)
+            if language:
+                filters.append(LanguageFilter(language))
+            filter_chain = FilterChain(filters)
+
+            strategy = BFSDeepCrawlStrategy(
+                max_depth=max_depth,
+                max_pages=max_pages,
+                include_external=False,
+                filter_chain=filter_chain,
+                # A should_cancel callback (rather than calling strategy.cancel())
+                # because _arun_stream() resets its internal cancel event right as it
+                # starts — calling cancel() before that point would be silently wiped
+                # out. The callback is re-read live on every check, so it works no
+                # matter when request_cancel() sets the flag.
+                should_cancel=lambda: job.cancel_requested,
+            )
+            config = CrawlerRunConfig(deep_crawl_strategy=strategy, stream=True)
+
             async for result in await crawler.arun(url, config=config):
                 if result.url in job.pages or result.url in job.login_blocked:
                     continue

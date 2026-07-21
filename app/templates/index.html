@@ -19,17 +19,12 @@
 
     <form class="crawl-form" id="crawl-form">
       <input type="url" id="url" name="url" placeholder="https://example.com" required>
-      <div class="maxpages-group">
-        <span class="maxpages-label">Max pages</span>
-        <input type="number" id="max_pages" name="max_pages" min="1" max="500" value="{{ default_max_pages }}" title="Max pages to crawl">
-        <label class="checkbox-label"><input type="checkbox" id="unlimited"> Unlimited</label>
-      </div>
       <select id="domain_scope" class="domain-scope" title="Which pages count as part of this site?">
         <option value="all" selected>Whole domain (incl. subdomains)</option>
         <option value="subdomain_only">This subdomain only</option>
         <option value="top_domain_only">Top-level domain only</option>
       </select>
-      <input type="text" id="language" class="language-input" placeholder="en" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to crawl all languages.">
+      <input type="text" id="language" class="language-input" placeholder="Primary language (auto)" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to auto-detect the starting page's language.">
       <button type="submit" id="submit-btn">Crawl</button>
     </form>
     <p class="field-error" id="form-error" style="display:none;"></p>

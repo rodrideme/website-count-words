@@ -22,9 +22,6 @@ from app.job_store import create_job, get_job
 from app.models import CrawlRequest, User
 from app.templates import templates
 
-DEFAULT_MAX_PAGES = int(os.environ.get("DEFAULT_MAX_PAGES", "150"))
-MAX_PAGES_HARD_CAP = int(os.environ.get("MAX_PAGES_HARD_CAP", "500"))
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -63,7 +60,6 @@ async def index(request: Request, user: User = Depends(require_user)):
         {
             "user": user,
             "recent_runs": recent_runs,
-            "default_max_pages": DEFAULT_MAX_PAGES,
         },
     )
 
@@ -74,11 +70,7 @@ async def start_crawl(payload: CrawlRequest, user: User = Depends(require_user_a
     if not _valid_url(url):
         raise HTTPException(status_code=400, detail="Please enter a valid http(s) URL")
 
-    if payload.unlimited:
-        max_pages: int | float = float("inf")
-    else:
-        max_pages = payload.max_pages or DEFAULT_MAX_PAGES
-        max_pages = max(1, min(max_pages, MAX_PAGES_HARD_CAP))
+    max_pages = float("inf")
 
     source_url = db.normalize_url(url)
 
@@ -104,7 +96,6 @@ async def crawl_page(run_id: str, request: Request, user: User = Depends(require
                 "run_id": run_id,
                 "source_url": job.source_url,
                 "started_at": job.started_at,
-                "default_max_pages": DEFAULT_MAX_PAGES,
             },
         )
 
@@ -121,7 +112,6 @@ async def crawl_page(run_id: str, request: Request, user: User = Depends(require
             "source_url": run.source_url,
             "run": run,
             "initial_pages": [p.model_dump() for p in run.pages],
-            "default_max_pages": DEFAULT_MAX_PAGES,
         },
     )
 

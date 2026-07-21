@@ -26,14 +26,8 @@ function initHomeForm() {
   const errorEl = document.getElementById("form-error");
   const submitBtn = document.getElementById("submit-btn");
   const urlInput = document.getElementById("url");
-  const maxPagesInput = document.getElementById("max_pages");
-  const unlimitedCheckbox = document.getElementById("unlimited");
   const domainScopeSelect = document.getElementById("domain_scope");
   const languageInput = document.getElementById("language");
-
-  unlimitedCheckbox.addEventListener("change", () => {
-    maxPagesInput.disabled = unlimitedCheckbox.checked;
-  });
 
   urlInput.addEventListener("blur", () => {
     if (!languageInput.value) {
@@ -49,16 +43,14 @@ function initHomeForm() {
     submitBtn.textContent = "Starting…";
 
     const url = urlInput.value;
-    const unlimited = unlimitedCheckbox.checked;
     const domainScope = domainScopeSelect.value;
     const language = languageInput.value.trim() || null;
-    const maxPages = parseInt(maxPagesInput.value, 10);
 
     try {
       const res = await fetch("/crawl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, max_pages: maxPages, unlimited, domain_scope: domainScope, language }),
+        body: JSON.stringify({ url, domain_scope: domainScope, language }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -221,26 +213,27 @@ function initCrawlPage(opts) {
   const cancelBtn = document.getElementById("cancel-btn");
   const recrawlForm = document.getElementById("recrawl-form");
   const recrawlBtn = document.getElementById("recrawl-btn");
-  const recrawlMaxPagesInput = document.getElementById("recrawl-max-pages");
-  const recrawlUnlimitedCheckbox = document.getElementById("recrawl-unlimited");
   const recrawlDomainScopeSelect = document.getElementById("recrawl-domain-scope");
   const recrawlLanguageInput = document.getElementById("recrawl-language");
   const printBtn = document.getElementById("print-btn");
   const runDateEl = document.getElementById("run-date");
+  const detectedLanguageNote = document.getElementById("detected-language-note");
   const blockedHostEl = document.getElementById("blocked-host-count");
 
   const updateBlockedHostCount = (pages) => {
     setStatCount(blockedHostEl, pages.filter((p) => p.blocked_by_host).length);
   };
 
+  const showDetectedLanguage = (code) => {
+    if (!code) return;
+    detectedLanguageNote.textContent = "Auto-detected language: " + code;
+    detectedLanguageNote.style.display = "block";
+  };
+
   const updatePageCount = (count) => {
     pageCountEl.textContent = count;
     pagesHeadingCountEl.textContent = count ? `— ${count.toLocaleString("en-US")} crawled` : "";
   };
-
-  recrawlUnlimitedCheckbox.addEventListener("change", () => {
-    recrawlMaxPagesInput.disabled = recrawlUnlimitedCheckbox.checked;
-  });
 
   const suggestedLanguage = suggestLanguageFromUrl(opts.sourceUrl);
   if (suggestedLanguage) recrawlLanguageInput.value = suggestedLanguage;
@@ -279,8 +272,6 @@ function initCrawlPage(opts) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         url: opts.sourceUrl,
-        max_pages: parseInt(recrawlMaxPagesInput.value, 10),
-        unlimited: recrawlUnlimitedCheckbox.checked,
         domain_scope: recrawlDomainScopeSelect.value,
         language: recrawlLanguageInput.value.trim() || null,
         force_recrawl: true,
@@ -338,6 +329,7 @@ function initCrawlPage(opts) {
     totalWordsEl.textContent = data.total_words.toLocaleString("en-US");
     updatePageCount(data.page_count);
     setStatCount(loginBlockedEl, data.login_blocked_count);
+    showDetectedLanguage(data.detected_language);
     if (data.limit_reached) showLimitNote();
     if (data.status === "failed") showError(data.error);
     if (data.status === "cancelled") cancelNote.style.display = "block";
