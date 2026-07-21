@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Website Word Counter{% endblock %}
+{% block body %}
+  <header class="topbar">
+    <h1 style="margin:0;">Website Word Counter</h1>
+    <div class="user-chip">
+      {% if user.picture %}<img src="{{ user.picture }}" alt="">{% endif %}
+      <span>{{ user.name }}</span>
+      <a href="/logout">Log out</a>
+    </div>
+  </header>
+
+  <p class="subtitle">Paste a URL and we'll crawl the whole site, counting words page by page.</p>
+
+  <form class="crawl-form" id="crawl-form">
+    <input type="url" id="url" name="url" placeholder="https://example.com" required>
+    <input type="number" id="max_pages" name="max_pages" min="1" max="500" value="{{ default_max_pages }}" title="Max pages to crawl">
+    <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.9rem; color:#444;">
+      <input type="checkbox" id="unlimited"> Unlimited
+    </label>
+    <select id="domain_scope" title="Which pages count as part of this site?">
+      <option value="all" selected>Crawl the whole domain (including subdomains)</option>
+      <option value="subdomain_only">Stay on this subdomain only</option>
+      <option value="top_domain_only">Stay on the top-level domain only (skip other subdomains)</option>
+    </select>
+    <input type="text" id="language" placeholder="Language, e.g. en (optional)" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to crawl all languages.">
+    <button type="submit" id="submit-btn">Crawl</button>
+  </form>
+  <p class="field-error" id="form-error" style="display:none;"></p>
+
+  <h2>Your recent runs</h2>
+  {% if recent_runs %}
+    <ul class="recent-runs">
+      {% for run in recent_runs %}
+        <li>
+          <a href="/crawl/{{ run.id }}">{{ run.source_url }}</a>
+          <span class="muted">
+            {{ run.total_words }} words · {{ run.page_count }} pages · {{ run.status }} ·
+            <span class="recent-run-date" data-iso="{{ run.created_at }}"></span>
+          </span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">No crawls yet — try one above.</p>
+  {% endif %}
+
+  <script src="/static/app.js"></script>
+  <script>
+    initHomeForm();
+    for (const el of document.querySelectorAll(".recent-run-date")) {
+      el.textContent = formatDate(el.dataset.iso);
+    }
+  </script>
+{% endblock %}

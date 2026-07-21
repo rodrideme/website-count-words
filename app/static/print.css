@@ -1,0 +1,68 @@
+@media print {
+  @page {
+    margin: 2cm;
+  }
+
+  body {
+    max-width: none;
+    padding: 0;
+    background: white;
+    color: black;
+    font-family: Georgia, "Times New Roman", serif;
+  }
+
+  /* Interactive chrome has no place in a printed report. */
+  .topbar a,
+  .crawl-form,
+  #cancel-btn,
+  #print-btn,
+  .google-btn,
+  .field-error {
+    display: none !important;
+  }
+
+  .totals-bar {
+    position: static !important;
+    box-shadow: none !important;
+    background: white !important;
+    border-bottom: 2px solid #333;
+  }
+
+  .stat-card {
+    border: 1px solid #999;
+    break-inside: avoid;
+  }
+
+  /* The on-screen scroll box exists for a live-updating list; on paper the
+     whole table should just flow across pages naturally. */
+  .table-scroll {
+    max-height: none !important;
+    overflow: visible !important;
+    border: none !important;
+  }
+
+  table {
+    page-break-inside: auto;
+  }
+
+  tr {
+    page-break-inside: avoid;
+  }
+
+  thead th {
+    position: static !important;
+    box-shadow: none !important;
+    background: white !important;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  /* Links aren't clickable on paper, so print the destination inline. */
+  .open-link::after {
+    content: " (" attr(href) ")";
+    font-size: 0.75em;
+    color: #555;
+  }
+}

@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+jinja2
+crawl4ai
+aiosqlite
+authlib
+itsdangerous
+httpx
+python-multipart
+python-dotenv

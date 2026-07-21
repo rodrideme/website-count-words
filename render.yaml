@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: website-word-counter
+    env: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /login
+    envVars:
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DEFAULT_MAX_PAGES
+        value: "150"
+      - key: MAX_PAGES_HARD_CAP
+        value: "500"
+      - key: DB_PATH
+        value: /var/data/wordcount.db
+    disk:
+      name: wordcounter-data
+      mountPath: /var/data
+      sizeGB: 1

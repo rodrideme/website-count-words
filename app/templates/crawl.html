@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}{{ source_url }} — Website Word Counter{% endblock %}
+{% block body %}
+  <header class="topbar">
+    <div>
+      <a href="/">&larr; New crawl</a>
+      <h1 style="margin-top:0.5rem; word-break:break-all;">{{ source_url }}</h1>
+      <p class="muted" id="run-date"></p>
+    </div>
+  </header>
+
+  <div class="totals-bar">
+    <div class="stat-card">
+      <div class="muted">Status</div>
+      <span class="status-badge" id="status-badge">starting</span>
+    </div>
+    <div class="stat-card">
+      <div class="muted">Total words</div>
+      <div class="big" id="total-words">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="muted">Pages counted</div>
+      <div class="big" id="page-count">0</div>
+    </div>
+    <div class="stat-card stat-card-muted" title="Pages that returned a login wall instead of real content — hidden from the list below and excluded from the word total">
+      <div class="muted">Blocked (login required)</div>
+      <div class="big" id="login-blocked-count">0</div>
+    </div>
+    <div class="stat-card stat-card-muted" title="Pages where the site's own bot-detection (Cloudflare, Akamai, PerimeterX, rate limiting, etc.) blocked the crawler instead of returning real content. Still listed below, marked in amber, with the specific reason on hover.">
+      <div class="muted">Blocked by host</div>
+      <div class="big" id="blocked-host-count">0</div>
+    </div>
+  </div>
+
+  <p class="note" id="limit-note" style="display:none;"></p>
+  <p class="note" id="cancel-note" style="display:none;">This crawl was cancelled — showing partial results.</p>
+  <p class="error-box" id="error-box" style="display:none;"></p>
+
+  <button id="cancel-btn" class="secondary" style="display:none;">Cancel crawl</button>
+  <button id="print-btn" class="secondary">Print report</button>
+
+  <form class="crawl-form" id="recrawl-form">
+    <input type="number" id="recrawl-max-pages" min="1" max="500" value="{{ default_max_pages }}" title="Max pages to crawl">
+    <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.9rem; color:#444;">
+      <input type="checkbox" id="recrawl-unlimited"> Unlimited
+    </label>
+    <select id="recrawl-domain-scope" title="Which pages count as part of this site?">
+      <option value="all" selected>Crawl the whole domain (including subdomains)</option>
+      <option value="subdomain_only">Stay on this subdomain only</option>
+      <option value="top_domain_only">Stay on the top-level domain only (skip other subdomains)</option>
+    </select>
+    <input type="text" id="recrawl-language" placeholder="Language, e.g. en (optional)" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to crawl all languages.">
+    <button type="submit" id="recrawl-btn" class="secondary">Re-crawl with these settings</button>
+  </form>
+
+  <div id="summary" style="display:none;">
+    <h2>By folder</h2>
+    <table>
+      <thead>
+        <tr><th>Folder</th><th>Pages</th><th>Total words</th></tr>
+      </thead>
+      <tbody id="folder-tbody"></tbody>
+    </table>
+
+    <h2>Top pages by word count</h2>
+    <ol id="top-pages-list"></ol>
+  </div>
+
+  <h2>Pages</h2>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>URL</th><th>Title</th><th>Words</th><th>Open</th></tr>
+      </thead>
+      <tbody id="page-tbody"></tbody>
+    </table>
+  </div>
+
+  <script src="/static/app.js"></script>
+  <script>
+    initCrawlPage({
+      mode: {{ mode | tojson }},
+      runId: {{ run_id | tojson }},
+      sourceUrl: {{ source_url | tojson }},
+      startedAt: {{ started_at | default(none) | tojson }},
+      {% if run %}
+      initialStatus: {{ run.status | tojson }},
+      initialTotalWords: {{ run.total_words | tojson }},
+      initialPageCount: {{ run.page_count | tojson }},
+      initialLoginBlockedCount: {{ run.login_blocked_count | tojson }},
+      initialLimitReached: {{ run.limit_reached | tojson }},
+      createdAt: {{ run.created_at | tojson }},
+      initialPages: {{ initial_pages | tojson }},
+      {% endif %}
+    });
+  </script>
+{% endblock %}
