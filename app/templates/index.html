@@ -2,48 +2,59 @@
 {% block title %}Website Word Counter{% endblock %}
 {% block body %}
   <header class="topbar">
-    <h1 style="margin:0;">Website Word Counter</h1>
+    <div class="logo">
+      <div class="logo-mark">#</div>
+      <div class="logo-name">Word Counter</div>
+    </div>
     <div class="user-chip">
-      {% if user.picture %}<img src="{{ user.picture }}" alt="">{% endif %}
-      <span>{{ user.name }}</span>
+      {% if user.picture %}<img src="{{ user.picture }}" alt="">{% else %}<span class="avatar">{{ user.name[0] | upper }}</span>{% endif %}
+      <span class="name">{{ user.name }}</span>
+      <span class="sep"></span>
       <a href="/logout">Log out</a>
     </div>
   </header>
 
-  <p class="subtitle">Paste a URL and we'll crawl the whole site, counting words page by page.</p>
+  <div class="page-wrap">
+    <p class="subtitle">Crawl a website and count every word it contains — total, per page, per folder.</p>
 
-  <form class="crawl-form" id="crawl-form">
-    <input type="url" id="url" name="url" placeholder="https://example.com" required>
-    <input type="number" id="max_pages" name="max_pages" min="1" max="500" value="{{ default_max_pages }}" title="Max pages to crawl">
-    <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.9rem; color:#444;">
-      <input type="checkbox" id="unlimited"> Unlimited
-    </label>
-    <select id="domain_scope" title="Which pages count as part of this site?">
-      <option value="all" selected>Crawl the whole domain (including subdomains)</option>
-      <option value="subdomain_only">Stay on this subdomain only</option>
-      <option value="top_domain_only">Stay on the top-level domain only (skip other subdomains)</option>
-    </select>
-    <input type="text" id="language" placeholder="Language, e.g. en (optional)" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to crawl all languages.">
-    <button type="submit" id="submit-btn">Crawl</button>
-  </form>
-  <p class="field-error" id="form-error" style="display:none;"></p>
+    <form class="crawl-form" id="crawl-form">
+      <input type="url" id="url" name="url" placeholder="https://example.com" required>
+      <div class="maxpages-group">
+        <span class="maxpages-label">Max pages</span>
+        <input type="number" id="max_pages" name="max_pages" min="1" max="500" value="{{ default_max_pages }}" title="Max pages to crawl">
+        <label class="checkbox-label"><input type="checkbox" id="unlimited"> Unlimited</label>
+      </div>
+      <select id="domain_scope" class="domain-scope" title="Which pages count as part of this site?">
+        <option value="all" selected>Whole domain (incl. subdomains)</option>
+        <option value="subdomain_only">This subdomain only</option>
+        <option value="top_domain_only">Top-level domain only</option>
+      </select>
+      <input type="text" id="language" class="language-input" placeholder="en" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to crawl all languages.">
+      <button type="submit" id="submit-btn">Crawl</button>
+    </form>
+    <p class="field-error" id="form-error" style="display:none;"></p>
 
-  <h2>Your recent runs</h2>
-  {% if recent_runs %}
-    <ul class="recent-runs">
-      {% for run in recent_runs %}
-        <li>
-          <a href="/crawl/{{ run.id }}">{{ run.source_url }}</a>
-          <span class="muted">
-            {{ run.total_words }} words · {{ run.page_count }} pages · {{ run.status }} ·
-            <span class="recent-run-date" data-iso="{{ run.created_at }}"></span>
-          </span>
-        </li>
-      {% endfor %}
-    </ul>
-  {% else %}
-    <p class="muted">No crawls yet — try one above.</p>
-  {% endif %}
+    <div style="margin-top:52px;">
+      <div class="section-label">Your recent runs</div>
+      {% if recent_runs %}
+        <ul class="recent-runs">
+          {% for run in recent_runs %}
+            <li>
+              <a href="/crawl/{{ run.id }}" class="run-row">
+                <span class="run-url">{{ run.source_url }}</span>
+                <span class="run-words">{{ "{:,}".format(run.total_words) }} words</span>
+                <span class="run-pages">{{ "{:,}".format(run.page_count) }} pages</span>
+                <span class="status-badge status-{{ run.status }}">{{ run.status | capitalize }}</span>
+                <span class="run-date recent-run-date" data-iso="{{ run.created_at }}"></span>
+              </a>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">No crawls yet — try one above.</p>
+      {% endif %}
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
   <script>

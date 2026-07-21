@@ -81,12 +81,19 @@ function badgeClass(status) {
   return "status-badge status-crawling";
 }
 
+function statusLabel(status) {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
 const TERMINAL_STATUSES = ["completed", "failed", "cancelled"];
 
 function formatDate(iso) {
   if (!iso) return "";
   const d = new Date(iso);
-  return isNaN(d.getTime()) ? iso : d.toLocaleString();
+  if (isNaN(d.getTime())) return iso;
+  const datePart = d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  const timePart = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return `${datePart} · ${timePart}`;
 }
 
 function renderPageRow(tbody, page) {
@@ -104,8 +111,10 @@ function renderPageRow(tbody, page) {
   const titleTd = document.createElement("td");
   titleTd.textContent = page.title || "";
   const wordsTd = document.createElement("td");
-  wordsTd.textContent = page.blocked_by_host ? "blocked" : page.success ? page.word_count : "failed";
+  wordsTd.className = "words-cell";
+  wordsTd.textContent = page.blocked_by_host ? "blocked" : page.success ? page.word_count.toLocaleString("en-US") : "failed";
   const openTd = document.createElement("td");
+  openTd.className = "open-cell";
   const openLink = document.createElement("a");
   openLink.href = page.url;
   openLink.target = "_blank";
@@ -135,16 +144,28 @@ function renderFolderGroups(pages) {
     groups[folder].count += 1;
   }
   const rows = Object.entries(groups).sort((a, b) => b[1].words - a[1].words);
+  const maxWords = rows.length ? rows[0][1].words : 1;
   const tbody = document.getElementById("folder-tbody");
   tbody.innerHTML = "";
   for (const [folder, stats] of rows) {
     const tr = document.createElement("tr");
+
     const folderTd = document.createElement("td");
-    folderTd.textContent = folder;
+    const bar = document.createElement("div");
+    bar.className = "folder-bar";
+    bar.style.width = Math.max(1, Math.round((stats.words / maxWords) * 100)) + "%";
+    const folderSpan = document.createElement("span");
+    folderSpan.textContent = folder;
+    folderTd.append(bar, folderSpan);
+
     const countTd = document.createElement("td");
-    countTd.textContent = stats.count;
+    countTd.className = "folder-pages";
+    countTd.innerHTML = `<span>${stats.count.toLocaleString("en-US")}</span>`;
+
     const wordsTd = document.createElement("td");
-    wordsTd.textContent = stats.words;
+    wordsTd.className = "folder-words";
+    wordsTd.innerHTML = `<span>${stats.words.toLocaleString("en-US")}</span>`;
+
     tr.append(folderTd, countTd, wordsTd);
     tbody.appendChild(tr);
   }
@@ -157,11 +178,21 @@ function renderTopPages(pages) {
     .filter((p) => p.success)
     .sort((a, b) => b.word_count - a.word_count)
     .slice(0, 5);
-  for (const page of top) {
+  top.forEach((page, i) => {
     const li = document.createElement("li");
-    li.textContent = `${page.url} — ${page.word_count} words`;
+    const rank = document.createElement("span");
+    rank.className = "rank";
+    rank.textContent = i + 1;
+    const path = document.createElement("span");
+    path.className = "path";
+    path.title = page.url;
+    path.textContent = page.url;
+    const words = document.createElement("span");
+    words.className = "words";
+    words.textContent = page.word_count.toLocaleString("en-US");
+    li.append(rank, path, words);
     list.appendChild(li);
-  }
+  });
 }
 
 function renderSummary(pages) {
@@ -170,10 +201,18 @@ function renderSummary(pages) {
   document.getElementById("summary").style.display = "";
 }
 
+function setStatCount(el, count) {
+  el.textContent = count;
+  el.classList.toggle("zero", count === 0);
+}
+
 function initCrawlPage(opts) {
   const statusBadge = document.getElementById("status-badge");
+  const statusDot = document.getElementById("status-dot");
+  const statusText = document.getElementById("status-text");
   const totalWordsEl = document.getElementById("total-words");
   const pageCountEl = document.getElementById("page-count");
+  const pagesHeadingCountEl = document.getElementById("pages-heading-count");
   const loginBlockedEl = document.getElementById("login-blocked-count");
   const limitNote = document.getElementById("limit-note");
   const cancelNote = document.getElementById("cancel-note");
@@ -191,7 +230,12 @@ function initCrawlPage(opts) {
   const blockedHostEl = document.getElementById("blocked-host-count");
 
   const updateBlockedHostCount = (pages) => {
-    blockedHostEl.textContent = pages.filter((p) => p.blocked_by_host).length;
+    setStatCount(blockedHostEl, pages.filter((p) => p.blocked_by_host).length);
+  };
+
+  const updatePageCount = (count) => {
+    pageCountEl.textContent = count;
+    pagesHeadingCountEl.textContent = count ? `— ${count.toLocaleString("en-US")} crawled` : "";
   };
 
   recrawlUnlimitedCheckbox.addEventListener("change", () => {
@@ -204,8 +248,9 @@ function initCrawlPage(opts) {
   printBtn.addEventListener("click", () => window.print());
 
   const setStatus = (status) => {
-    statusBadge.textContent = status;
     statusBadge.className = badgeClass(status);
+    statusText.textContent = statusLabel(status);
+    statusDot.innerHTML = status === "crawling" ? '<span class="pulse-dot"></span>' : "";
   };
 
   const showLimitNote = () => {
@@ -248,9 +293,9 @@ function initCrawlPage(opts) {
   if (opts.mode === "past") {
     runDateEl.textContent = "Run: " + formatDate(opts.createdAt);
     setStatus(opts.initialStatus);
-    totalWordsEl.textContent = opts.initialTotalWords;
-    pageCountEl.textContent = opts.initialPageCount;
-    loginBlockedEl.textContent = opts.initialLoginBlockedCount || 0;
+    totalWordsEl.textContent = opts.initialTotalWords.toLocaleString("en-US");
+    updatePageCount(opts.initialPageCount);
+    setStatCount(loginBlockedEl, opts.initialLoginBlockedCount || 0);
     if (opts.initialLimitReached) showLimitNote();
     if (opts.initialStatus === "failed") showError();
     if (opts.initialStatus === "cancelled") cancelNote.style.display = "block";
@@ -266,6 +311,7 @@ function initCrawlPage(opts) {
   // live mode
   runDateEl.textContent = "Started: " + formatDate(opts.startedAt);
   setStatus("starting");
+  setStatCount(blockedHostEl, 0);
   cancelBtn.style.display = "";
   const pages = [];
   const source = new EventSource("/events/" + opts.runId);
@@ -274,8 +320,8 @@ function initCrawlPage(opts) {
     const data = JSON.parse(evt.data);
     pages.push(data.page);
     renderPageRow(tbody, data.page);
-    totalWordsEl.textContent = data.total_words;
-    pageCountEl.textContent = pages.length;
+    totalWordsEl.textContent = data.total_words.toLocaleString("en-US");
+    updatePageCount(pages.length);
     updateBlockedHostCount(pages);
   });
 
@@ -283,15 +329,15 @@ function initCrawlPage(opts) {
     const data = JSON.parse(evt.data);
     // Intentionally not rendered in the page list — just a running count of
     // pages that turned out to be login walls rather than real content.
-    loginBlockedEl.textContent = data.login_blocked_count;
+    setStatCount(loginBlockedEl, data.login_blocked_count);
   });
 
   source.addEventListener("status", (evt) => {
     const data = JSON.parse(evt.data);
     setStatus(data.status);
-    totalWordsEl.textContent = data.total_words;
-    pageCountEl.textContent = data.page_count;
-    loginBlockedEl.textContent = data.login_blocked_count;
+    totalWordsEl.textContent = data.total_words.toLocaleString("en-US");
+    updatePageCount(data.page_count);
+    setStatCount(loginBlockedEl, data.login_blocked_count);
     if (data.limit_reached) showLimitNote();
     if (data.status === "failed") showError(data.error);
     if (data.status === "cancelled") cancelNote.style.display = "block";
