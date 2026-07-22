@@ -3,7 +3,14 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from crawl4ai import AsyncUrlSeeder, AsyncWebCrawler, CrawlerRunConfig, SeedingConfig
+from crawl4ai import (
+    AsyncUrlSeeder,
+    AsyncWebCrawler,
+    CrawlerRunConfig,
+    DefaultMarkdownGenerator,
+    PruningContentFilter,
+    SeedingConfig,
+)
 from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
 from crawl4ai.deep_crawling.filters import DomainFilter, FilterChain, URLFilter
 from crawl4ai.utils import get_base_domain
@@ -18,14 +25,27 @@ def _markdown_text(result) -> str:
     markdown = getattr(result, "markdown", None)
     if markdown is None:
         return ""
-    # Newer crawl4ai versions return a MarkdownGenerationResult object
-    # rather than a plain string.
-    raw = getattr(markdown, "raw_markdown", None)
-    if raw is not None:
-        return raw
     if isinstance(markdown, str):
         return markdown
-    return ""
+    # fit_markdown (main-content only, via the PruningContentFilter below) is
+    # far closer to visible article text than raw_markdown's full-page dump.
+    fit = getattr(markdown, "fit_markdown", None)
+    if fit and not fit.startswith("Error generating fit markdown"):
+        return fit
+    return getattr(markdown, "raw_markdown", None) or ""
+
+
+_IMAGE_MARKDOWN_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_LINK_MARKDOWN_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_LEADING_MARKUP_RE = re.compile(r"^\s*(#{1,6}|[-*+]|\d+\.|>)\s+", re.MULTILINE)
+
+
+def clean_markdown_for_counting(text: str) -> str:
+    """Strips markdown syntax a browser text-selection would never include: image markup, link URLs, heading/bullet markers."""
+    text = _IMAGE_MARKDOWN_RE.sub("", text)
+    text = _LINK_MARKDOWN_RE.sub(r"\1", text)
+    text = _LEADING_MARKUP_RE.sub("", text)
+    return text
 
 
 _LOGIN_KEYWORDS = (
@@ -308,7 +328,13 @@ async def run_crawl(
                     pause_at_words is not None and job.total_words >= pause_at_words
                 ),
             )
-            config = CrawlerRunConfig(deep_crawl_strategy=strategy, stream=True)
+            config = CrawlerRunConfig(
+                deep_crawl_strategy=strategy,
+                stream=True,
+                markdown_generator=DefaultMarkdownGenerator(content_filter=PruningContentFilter()),
+                excluded_tags=["nav", "footer", "aside", "form"],
+                word_count_threshold=10,
+            )
 
             async for result in await crawler.arun(url, config=config):
                 if result.url in job.pages or result.url in job.login_blocked:
@@ -339,7 +365,7 @@ async def run_crawl(
                     continue
 
                 if result.success:
-                    text = _markdown_text(result)
+                    text = clean_markdown_for_counting(_markdown_text(result))
                     word_count = count_words(text)
                     page = PageResult(url=result.url, title=title, word_count=word_count, success=True)
                     job.total_words += word_count
