@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
+import time
 from urllib.parse import urlparse
 
 import psutil
@@ -21,6 +23,7 @@ from crawl4ai.utils import get_base_domain
 from app import db
 from app.job_store import get_job
 from app.models import PageResult
+from app.notifications import send_crawl_notification
 from app.word_count import count_words
 
 
@@ -352,6 +355,29 @@ async def run_crawl(
                 # found links to" count for the pre-crawl estimate.
                 job.resume_state = state
 
+            _last_cancel_poll = 0.0
+
+            async def _should_cancel() -> bool:
+                # job.cancel_requested only reflects a cancel request that
+                # happened to land on THIS process — if the "Cancel crawl"
+                # request was handled by a different worker process (this app
+                # doesn't share memory across processes), that flag alone
+                # would never be seen here. Polling the DB (throttled, since
+                # this runs on every should_cancel check) catches it either
+                # way within a few seconds instead of not at all.
+                nonlocal _last_cancel_poll
+                if job.cancel_requested:
+                    return True
+                now = time.monotonic()
+                if now - _last_cancel_poll > 3.0:
+                    _last_cancel_poll = now
+                    if await db.is_cancel_requested(job.id):
+                        job.cancel_requested = True
+                        return True
+                return _memory_exceeded() or (
+                    pause_at_words is not None and job.total_words >= pause_at_words
+                )
+
             strategy = BFSDeepCrawlStrategy(
                 max_depth=max_depth,
                 max_pages=max_pages,
@@ -365,9 +391,7 @@ async def run_crawl(
                 # out. The callback is re-read live on every check, so it works no
                 # matter when request_cancel() sets the flag. Also doubles as the
                 # "pause this estimate crawl once it's sampled enough" trigger.
-                should_cancel=lambda: job.cancel_requested or _memory_exceeded() or (
-                    pause_at_words is not None and job.total_words >= pause_at_words
-                ),
+                should_cancel=_should_cancel,
             )
             config = CrawlerRunConfig(
                 deep_crawl_strategy=strategy,
@@ -459,23 +483,48 @@ async def run_crawl(
             job.estimate_result = await _build_estimate_result(job, url, filters)
         else:
             job.status = "completed"
+    except asyncio.CancelledError:
+        # A direct task.cancel() (see Job.request_cancel) interrupts execution
+        # immediately, at whatever await point it's currently at — unlike
+        # crawl4ai's own should_cancel, which BFSDeepCrawlStrategy only
+        # checks between BFS levels, which can take a long time to come back
+        # around on a site with several slow pages in the same level.
+        job.status = "cancelled"
+        job.limit_reached = len(job.pages) + len(job.login_blocked) >= max_pages
+        raise
     except Exception as exc:
         job.status = "failed"
         job.error = str(exc)
+    finally:
+        # Runs even through the CancelledError re-raise above, so a direct
+        # task cancellation still leaves the job in a proper terminal state
+        # instead of just vanishing mid-crawl with nothing ever saved.
+        job.publish(job.status_payload())
 
-    job.publish(job.status_payload())
+        if job.status != "paused":
+            await db.save_run(
+                run_id=job.id,
+                source_url=job.source_url,
+                user_id=job.user_id,
+                status=job.status,
+                total_words=job.total_words,
+                pages=list(job.pages.values()),
+                limit_reached=job.limit_reached,
+                login_blocked_count=len(job.login_blocked),
+                domain_scope=job.domain_scope,
+                language=",".join(languages) if languages else None,
+                language_auto_detected=job.detected_language is not None,
+            )
 
-    if job.status != "paused":
-        await db.save_run(
-            run_id=job.id,
-            source_url=job.source_url,
-            user_id=job.user_id,
-            status=job.status,
-            total_words=job.total_words,
-            pages=list(job.pages.values()),
-            limit_reached=job.limit_reached,
-            login_blocked_count=len(job.login_blocked),
-            domain_scope=job.domain_scope,
-            language=",".join(languages) if languages else None,
-            language_auto_detected=job.detected_language is not None,
-        )
+        if job.status in ("completed", "failed", "cancelled"):
+            user = await db.get_user(job.user_id)
+            if user is not None:
+                await send_crawl_notification(
+                    to_email=user.email,
+                    source_url=job.source_url,
+                    status=job.status,
+                    total_words=job.total_words,
+                    page_count=len(job.pages),
+                    run_id=job.id,
+                    error=job.error or job.stopped_reason,
+                )

@@ -205,6 +205,93 @@ function renderFolderGroups(pages) {
   }
 }
 
+// Same ISO 639-1 set and first-path-segment heuristic as the backend's
+// LanguageFilter (app/crawler.py) — kept in sync manually, purely for
+// grouping the results table by language, not for filtering anything.
+const ISO_639_1_CODES = new Set([
+  "aa", "ab", "ae", "af", "ak", "am", "an", "ar", "as", "av", "ay", "az",
+  "ba", "be", "bg", "bh", "bi", "bm", "bn", "bo", "br", "bs",
+  "ca", "ce", "ch", "co", "cr", "cs", "cu", "cv", "cy",
+  "da", "de", "dv", "dz",
+  "ee", "el", "en", "eo", "es", "et", "eu",
+  "fa", "ff", "fi", "fj", "fo", "fr", "fy",
+  "ga", "gd", "gl", "gn", "gu", "gv",
+  "ha", "he", "hi", "ho", "hr", "ht", "hu", "hy", "hz",
+  "ia", "id", "ie", "ig", "ii", "ik", "io", "is", "it", "iu",
+  "ja", "jv",
+  "ka", "kg", "ki", "kj", "kk", "kl", "km", "kn", "ko", "kr", "ks", "ku", "kv", "kw", "ky",
+  "la", "lb", "lg", "li", "ln", "lo", "lt", "lu", "lv",
+  "mg", "mh", "mi", "mk", "ml", "mn", "mr", "ms", "mt", "my",
+  "na", "nb", "nd", "ne", "ng", "nl", "nn", "no", "nr", "nv", "ny",
+  "oc", "oj", "om", "or", "os",
+  "pa", "pi", "pl", "ps", "pt",
+  "qu",
+  "rm", "rn", "ro", "ru", "rw",
+  "sa", "sc", "sd", "se", "sg", "si", "sk", "sl", "sm", "sn", "so", "sq", "sr", "ss", "st", "su", "sv", "sw",
+  "ta", "te", "tg", "th", "ti", "tk", "tl", "tn", "to", "tr", "ts", "tt", "tw", "ty",
+  "ug", "uk", "ur", "uz",
+  "ve", "vi", "vo",
+  "wa", "wo",
+  "xh",
+  "yi", "yo",
+  "za", "zh", "zu",
+]);
+
+function languageForUrl(url) {
+  try {
+    const segments = new URL(url).pathname.split("/").filter(Boolean);
+    if (!segments.length) return "Default";
+    const code = segments[0].toLowerCase().split("-")[0].split("_")[0];
+    return code.length === 2 && ISO_639_1_CODES.has(code) ? code : "Default";
+  } catch (e) {
+    return "Default";
+  }
+}
+
+function renderLanguageGroups(pages) {
+  const groups = {};
+  for (const p of pages) {
+    const lang = languageForUrl(p.url);
+    if (!groups[lang]) groups[lang] = { words: 0, count: 0 };
+    groups[lang].words += p.word_count || 0;
+    groups[lang].count += 1;
+  }
+  const section = document.getElementById("language-section");
+  const rows = Object.entries(groups).sort((a, b) => b[1].words - a[1].words);
+  // A single group (e.g. every crawl with no multi-language filter applied)
+  // isn't worth a whole extra table — only show this when it's informative.
+  if (rows.length < 2) {
+    section.style.display = "none";
+    return;
+  }
+  const maxWords = rows[0][1].words || 1;
+  const tbody = document.getElementById("language-tbody");
+  tbody.innerHTML = "";
+  for (const [lang, stats] of rows) {
+    const tr = document.createElement("tr");
+
+    const langTd = document.createElement("td");
+    const bar = document.createElement("div");
+    bar.className = "folder-bar";
+    bar.style.width = Math.max(1, Math.round((stats.words / maxWords) * 100)) + "%";
+    const langSpan = document.createElement("span");
+    langSpan.textContent = lang;
+    langTd.append(bar, langSpan);
+
+    const countTd = document.createElement("td");
+    countTd.className = "folder-pages";
+    countTd.innerHTML = `<span>${stats.count.toLocaleString("en-US")}</span>`;
+
+    const wordsTd = document.createElement("td");
+    wordsTd.className = "folder-words";
+    wordsTd.innerHTML = `<span>${stats.words.toLocaleString("en-US")}</span>`;
+
+    tr.append(langTd, countTd, wordsTd);
+    tbody.appendChild(tr);
+  }
+  section.style.display = "";
+}
+
 function renderTopPages(pages) {
   const list = document.getElementById("top-pages-list");
   list.innerHTML = "";
@@ -229,9 +316,35 @@ function renderTopPages(pages) {
   });
 }
 
+function pagesToCsv(pages) {
+  const escapeCell = (value) => {
+    const s = String(value);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const rows = [["URL", "Title", "Words", "Status", "Error"]];
+  for (const p of pages) {
+    const status = p.blocked_by_host ? "blocked" : p.login_required ? "login_required" : p.success ? "ok" : "failed";
+    rows.push([p.url, p.title || "", p.success ? p.word_count : "", status, p.error || ""]);
+  }
+  return rows.map((row) => row.map(escapeCell).join(",")).join("\r\n");
+}
+
+function downloadCsv(filename, csvText) {
+  const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 function renderSummary(pages) {
   renderTopPages(pages);
   renderFolderGroups(pages);
+  renderLanguageGroups(pages);
   document.getElementById("summary").style.display = "";
 }
 
@@ -259,6 +372,7 @@ function initCrawlPage(opts) {
   const recrawlDomainScopeSelect = document.getElementById("recrawl-domain-scope");
   const recrawlLanguageInput = document.getElementById("recrawl-language");
   const printBtn = document.getElementById("print-btn");
+  const exportCsvBtn = document.getElementById("export-csv-btn");
   const runDateEl = document.getElementById("run-date");
   const detectedLanguageNote = document.getElementById("detected-language-note");
   const blockedHostEl = document.getElementById("blocked-host-count");
@@ -342,6 +456,18 @@ function initCrawlPage(opts) {
 
   printBtn.addEventListener("click", () => window.print());
 
+  let currentPages = opts.initialPages || [];
+  exportCsvBtn.addEventListener("click", () => {
+    const host = (() => {
+      try {
+        return new URL(opts.sourceUrl).hostname;
+      } catch (e) {
+        return "crawl";
+      }
+    })();
+    downloadCsv(`${host}-word-count.csv`, pagesToCsv(currentPages));
+  });
+
   const setStatus = (status) => {
     statusBadge.className = badgeClass(status);
     statusText.textContent = statusLabel(status);
@@ -409,6 +535,7 @@ function initCrawlPage(opts) {
   cancelBtn.style.display = "";
   const seenUrls = new Set();
   const pages = [];
+  currentPages = pages; // same array reference, kept in sync as pages.push() happens below
 
   proceedBtn.addEventListener("click", async () => {
     proceedBtn.disabled = true;

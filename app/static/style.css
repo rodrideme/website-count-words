@@ -438,7 +438,8 @@ ul.recent-runs a.run-row:hover { background: #FCFBF8; text-decoration: none; }
 @media (max-width: 720px) {
   .report-grid { grid-template-columns: 1fr; }
 }
-.report-grid h2, .report-body > h2 {
+#language-section { margin-bottom: 48px; }
+.report-grid h2, .report-body > h2, #language-section h2 {
   font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.3px;

@@ -84,6 +84,9 @@ async def _ensure_columns() -> None:
     if "resume_state_json" not in existing:
         await conn.execute("ALTER TABLE runs ADD COLUMN resume_state_json TEXT")
         await conn.commit()
+    if "cancel_requested" not in existing:
+        await conn.execute("ALTER TABLE runs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0")
+        await conn.commit()
 
 
 async def close_db() -> None:
@@ -211,11 +214,52 @@ async def save_run(
 async def get_crawling_runs() -> list[RunRecord]:
     """Runs still marked "crawling" at startup are, by definition, orphaned —
     JOBS is always empty on a fresh process, so nothing else could still be
-    running one. Used to auto-resume crawls interrupted by a crash/restart."""
+    running one. Used to auto-resume crawls interrupted by a crash/restart.
+
+    First resets any rows stuck at "resuming" (claimed by claim_crawling_run,
+    then crashed again before reaching a checkpoint) back to "crawling" so
+    they're eligible again — safe to run redundantly if multiple processes
+    boot at once, since the end state is identical either way."""
     conn = _conn()
+    await conn.execute("UPDATE runs SET status = 'crawling' WHERE status = 'resuming'")
+    await conn.commit()
     async with conn.execute("SELECT * FROM runs WHERE status = 'crawling'") as cur:
         rows = await cur.fetchall()
     return [_row_to_run(row) for row in rows]
+
+
+async def claim_crawling_run(run_id: str) -> bool:
+    """Atomically claims an orphaned run for auto-resume, so if more than one
+    process/instance races to resume the same run on startup, only one wins.
+    Must only ever match the exact "crawling" state (not e.g. "resuming" too)
+    — SQLite serializes this UPDATE across processes sharing the same DB
+    file, so whichever one flips the row first leaves nothing for the other
+    to match."""
+    conn = _conn()
+    cur = await conn.execute(
+        "UPDATE runs SET status = 'resuming' WHERE id = ? AND status = 'crawling'",
+        (run_id,),
+    )
+    await conn.commit()
+    return cur.rowcount == 1
+
+
+async def request_cancel(run_id: str) -> None:
+    """Persists a cancel request to the shared DB (not just in-memory), so it
+    reaches whichever process is actually running the crawl even if the HTTP
+    request that triggered it landed on a different one. A no-op if the run
+    has no row yet (cancelled before its first checkpoint) — the in-memory
+    flag set alongside this call covers that narrow window instead."""
+    conn = _conn()
+    await conn.execute("UPDATE runs SET cancel_requested = 1 WHERE id = ?", (run_id,))
+    await conn.commit()
+
+
+async def is_cancel_requested(run_id: str) -> bool:
+    conn = _conn()
+    async with conn.execute("SELECT cancel_requested FROM runs WHERE id = ?", (run_id,)) as cur:
+        row = await cur.fetchone()
+    return bool(row["cancel_requested"]) if row else False
 
 
 async def list_recent_runs(user_id: int, limit: int = 10) -> list[RunRecord]:

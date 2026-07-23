@@ -37,12 +37,21 @@ class Job:
     # crash happened before the specific login-blocked URLs were persisted,
     # just their count, so it's tracked separately from the live dict above.
     restored_login_blocked_count: int = 0
+    # The asyncio.Task actually running run_crawl for this job, if it's in
+    # this process (never persisted/serialized — purely a runtime handle).
+    # crawl4ai's BFSDeepCrawlStrategy only checks its cooperative
+    # should_cancel callback between BFS levels, which can take a long time
+    # to come back around on a slow site — cancelling this task directly
+    # interrupts it immediately, at whatever await point it's currently at.
+    task: asyncio.Task | None = None
 
     def request_cancel(self) -> None:
-        # crawl4ai's BFS strategy is given a should_cancel callback that reads
-        # this flag on every check, so setting it is enough regardless of
-        # whether the crawl has actually started yet (see crawler.py).
+        # Still set for should_cancel to see (covers the narrow window before
+        # a page's first checkpoint, or if .task somehow isn't set) — but
+        # .task.cancel() below is what actually makes this prompt.
         self.cancel_requested = True
+        if self.task is not None and not self.task.done():
+            self.task.cancel()
 
     def publish(self, event: dict) -> None:
         for queue in list(self.subscribers):

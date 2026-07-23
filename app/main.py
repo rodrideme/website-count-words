@@ -32,9 +32,12 @@ async def lifespan(app: FastAPI):
     # (JOBS is always empty on a fresh process) — pick each one back up from
     # its last checkpoint rather than leaving it stuck forever.
     for run in await db.get_crawling_runs():
+        if not await db.claim_crawling_run(run.id):
+            # Another process/instance already claimed this one — skip it.
+            continue
         job = restore_job(run)
         language = job.language_setting or job.detected_language
-        asyncio.create_task(
+        job.task = asyncio.create_task(
             run_crawl(job.id, job.source_url, job.max_pages, job.domain_scope, language, resume_state=job.resume_state)
         )
     yield
@@ -94,7 +97,7 @@ async def start_crawl(payload: CrawlRequest, user: User = Depends(require_user_a
 
     pause_at_words = PAUSE_AT_WORDS if payload.estimate else None
     job = create_job(source_url=source_url, user_id=user.id, max_pages=max_pages)
-    asyncio.create_task(
+    job.task = asyncio.create_task(
         run_crawl(job.id, source_url, max_pages, payload.domain_scope, payload.language, pause_at_words=pause_at_words)
     )
     return JSONResponse({"cached": False, "run_id": job.id})
@@ -110,7 +113,7 @@ async def resume_crawl(job_id: str, user: User = Depends(require_user_api)):
 
     language = job.language_setting or job.detected_language
     job.estimate_result = None
-    asyncio.create_task(
+    job.task = asyncio.create_task(
         run_crawl(job.id, job.source_url, float("inf"), job.domain_scope, language, resume_state=job.resume_state)
     )
     return JSONResponse({"status": "resuming"})
@@ -150,13 +153,24 @@ async def crawl_page(run_id: str, request: Request, user: User = Depends(require
 
 @app.post("/crawl/{job_id}/cancel")
 async def cancel_crawl(job_id: str, user: User = Depends(require_user_api)):
+    # The crawl may actually be running in a different worker process than
+    # the one handling this request (JOBS isn't shared across processes) —
+    # set the in-memory flag if we happen to have it locally, but always
+    # also persist to the DB so whichever process is really running it picks
+    # this up on its next poll (see crawler.py's _should_cancel).
     job = get_job(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if job.status in _TERMINAL_STATUSES:
-        return JSONResponse({"status": job.status})
+    if job is not None:
+        if job.status in _TERMINAL_STATUSES:
+            return JSONResponse({"status": job.status})
+        job.request_cancel()
+    else:
+        run = await db.get_run(job_id)
+        if run is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if run.status in _TERMINAL_STATUSES:
+            return JSONResponse({"status": run.status})
 
-    job.request_cancel()
+    await db.request_cancel(job_id)
     return JSONResponse({"status": "cancelling"})
 
 

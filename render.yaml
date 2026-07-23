@@ -16,6 +16,12 @@ services:
         value: /var/data/wordcount.db
       - key: MEMORY_LIMIT_MB
         value: "3200"
+      - key: MAILGUN_API_KEY
+        sync: false
+      - key: MAILGUN_DOMAIN
+        sync: false
+      - key: PUBLIC_BASE_URL
+        value: https://wordcounter.wxrks.app
     disk:
       name: wordcounter-data
       mountPath: /var/data

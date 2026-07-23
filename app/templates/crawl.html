@@ -45,6 +45,7 @@
     <div class="action-row" id="action-row">
       <button id="cancel-btn" class="danger-outline" style="display:none;">Cancel crawl</button>
       <button id="print-btn" class="secondary">Print report</button>
+      <button id="export-csv-btn" class="secondary">Export CSV</button>
       <div class="divider-v"></div>
       <form id="recrawl-form">
         <span class="label">Re-crawl:</span>
@@ -100,6 +101,15 @@
           <h2>Top pages by word count</h2>
           <ol id="top-pages-list"></ol>
         </div>
+      </div>
+      <div id="language-section" style="display:none;">
+        <h2>By language</h2>
+        <table class="folder-table">
+          <thead>
+            <tr><th>Language</th><th>Pages</th><th>Words</th></tr>
+          </thead>
+          <tbody id="language-tbody"></tbody>
+        </table>
       </div>
     </div>
 
