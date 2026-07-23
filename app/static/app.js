@@ -458,7 +458,10 @@ function initCrawlPage(opts) {
       updateSettingsPills(data.domain_scope, data.language_setting, data.detected_language);
       if (data.limit_reached) showLimitNote();
       if (data.status === "failed") showError(data.error);
-      if (data.status === "cancelled") cancelNote.style.display = "block";
+      if (data.status === "cancelled") {
+        cancelNote.textContent = data.stopped_reason || "This crawl was cancelled — showing partial results.";
+        cancelNote.style.display = "block";
+      }
       if (TERMINAL_STATUSES.includes(data.status)) {
         cancelBtn.style.display = "none";
         renderSummary(pages);

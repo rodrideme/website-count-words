@@ -32,6 +32,7 @@ class Job:
     # (see run_crawl's pause_at_words) resume later from the same frontier.
     resume_state: dict | None = None
     estimate_result: dict | None = None
+    stopped_reason: str | None = None
 
     def request_cancel(self) -> None:
         # crawl4ai's BFS strategy is given a should_cancel callback that reads
@@ -56,6 +57,7 @@ class Job:
             "domain_scope": self.domain_scope,
             "language_setting": self.language_setting,
             "estimate_result": self.estimate_result,
+            "stopped_reason": self.stopped_reason,
         }
 
 

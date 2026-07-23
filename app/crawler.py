@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import os
 import re
 from urllib.parse import urlparse
 
+import psutil
 from crawl4ai import (
     AsyncUrlSeeder,
     AsyncWebCrawler,
+    BrowserConfig,
     CrawlerRunConfig,
     DefaultMarkdownGenerator,
     PruningContentFilter,
@@ -180,6 +183,16 @@ def _detect_page_language(html: str | None) -> str | None:
 
 PAUSE_AT_WORDS = 100_000
 
+_process = psutil.Process()
+_MEMORY_LIMIT_BYTES = int(os.environ.get("MEMORY_LIMIT_MB", "3200")) * 1024 * 1024
+
+
+def _memory_exceeded() -> bool:
+    # This process's own RSS — unlike crawl4ai's built-in memory-adaptive
+    # dispatcher (psutil.virtual_memory(), host-wide), this reflects what
+    # actually counts against a container's cgroup memory limit.
+    return _process.memory_info().rss >= _MEMORY_LIMIT_BYTES
+
 
 async def _discover_sitemap_page_count(url: str, filters: list[URLFilter]) -> int | None:
     """Best-effort: how many pages does this site's sitemap list, after
@@ -278,8 +291,15 @@ async def run_crawl(
 
     languages = parse_languages(language)
 
+    browser_config = BrowserConfig(
+        avoid_css=True,
+        avoid_ads=True,
+        memory_saving_mode=True,
+        max_pages_before_recycle=500,
+    )
+
     try:
-        async with AsyncWebCrawler() as crawler:
+        async with AsyncWebCrawler(config=browser_config) as crawler:
             if not languages and resume_state is None:
                 # No language typed in, and this isn't a resumed crawl (where
                 # the language was already resolved the first time around) —
@@ -324,13 +344,14 @@ async def run_crawl(
                 # out. The callback is re-read live on every check, so it works no
                 # matter when request_cancel() sets the flag. Also doubles as the
                 # "pause this estimate crawl once it's sampled enough" trigger.
-                should_cancel=lambda: job.cancel_requested or (
+                should_cancel=lambda: job.cancel_requested or _memory_exceeded() or (
                     pause_at_words is not None and job.total_words >= pause_at_words
                 ),
             )
             config = CrawlerRunConfig(
                 deep_crawl_strategy=strategy,
                 stream=True,
+                semaphore_count=2,
                 markdown_generator=DefaultMarkdownGenerator(content_filter=PruningContentFilter()),
                 excluded_tags=["nav", "footer", "aside", "form"],
                 word_count_threshold=10,
@@ -398,6 +419,12 @@ async def run_crawl(
         job.limit_reached = len(job.pages) + len(job.login_blocked) >= max_pages
         if job.cancel_requested:
             job.status = "cancelled"
+        elif _memory_exceeded():
+            job.status = "cancelled"
+            job.stopped_reason = (
+                "This crawl was stopped automatically — it was using too much "
+                "memory to continue safely on this server."
+            )
         elif pause_at_words is not None and job.total_words >= pause_at_words:
             # Hit the pause threshold with the frontier still non-empty —
             # this is a genuine pause, not a finish. If the site instead

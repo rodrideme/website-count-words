@@ -2,7 +2,7 @@ services:
   - type: web
     name: website-word-counter
     env: docker
-    plan: starter
+    plan: pro
     dockerfilePath: ./Dockerfile
     healthCheckPath: /login
     envVars:
@@ -14,6 +14,8 @@ services:
         generateValue: true
       - key: DB_PATH
         value: /var/data/wordcount.db
+      - key: MEMORY_LIMIT_MB
+        value: "3200"
     disk:
       name: wordcounter-data
       mountPath: /var/data
