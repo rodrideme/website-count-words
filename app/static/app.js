@@ -136,6 +136,7 @@ function renderPageRow(tbody, page) {
     tr.title = page.error || "Blocked by the host's bot detection";
   } else if (!page.success) {
     tr.className = "page-failed";
+    tr.title = page.error || "Failed to fetch page";
   }
   const urlTd = document.createElement("td");
   urlTd.className = "url-cell";
@@ -270,8 +271,37 @@ function initCrawlPage(opts) {
   const proceedBtn = document.getElementById("proceed-btn");
   const adjustBtn = document.getElementById("adjust-btn");
 
+  const pageIssuesNote = document.getElementById("page-issues-note");
+
   const updateBlockedHostCount = (pages) => {
-    setStatCount(blockedHostEl, pages.filter((p) => p.blocked_by_host).length);
+    const blocked = pages.filter((p) => p.blocked_by_host);
+    const otherFailed = pages.filter((p) => !p.success && !p.blocked_by_host);
+    setStatCount(blockedHostEl, blocked.length);
+
+    const lines = [];
+    if (blocked.length) {
+      const sample = blocked[0].error || "the site's own bot detection";
+      lines.push(blocked.length === 1
+        ? `This site blocked our crawler and replied: "${sample}"`
+        : `${blocked.length.toLocaleString("en-US")} pages were blocked by this site's own bot detection — e.g.: "${sample}"`);
+    }
+    if (otherFailed.length) {
+      const sample = otherFailed[0].error || "an unknown error";
+      lines.push(otherFailed.length === 1
+        ? `1 page failed to load: "${sample}"`
+        : `${otherFailed.length.toLocaleString("en-US")} pages failed to load — e.g.: "${sample}"`);
+    }
+
+    if (!lines.length) {
+      pageIssuesNote.style.display = "none";
+      return;
+    }
+    pageIssuesNote.textContent = "";
+    lines.forEach((line, i) => {
+      if (i > 0) pageIssuesNote.appendChild(document.createElement("br"));
+      pageIssuesNote.appendChild(document.createTextNode(line));
+    });
+    pageIssuesNote.style.display = "block";
   };
 
   const showDetectedLanguage = (code) => {
