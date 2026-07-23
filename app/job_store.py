@@ -33,6 +33,10 @@ class Job:
     resume_state: dict | None = None
     estimate_result: dict | None = None
     stopped_reason: str | None = None
+    # Only set when reconstructed from a checkpoint (see restore_job) — the
+    # crash happened before the specific login-blocked URLs were persisted,
+    # just their count, so it's tracked separately from the live dict above.
+    restored_login_blocked_count: int = 0
 
     def request_cancel(self) -> None:
         # crawl4ai's BFS strategy is given a should_cancel callback that reads
@@ -50,7 +54,7 @@ class Job:
             "status": self.status,
             "total_words": self.total_words,
             "page_count": len(self.pages),
-            "login_blocked_count": len(self.login_blocked),
+            "login_blocked_count": len(self.login_blocked) + self.restored_login_blocked_count,
             "limit_reached": self.limit_reached,
             "error": self.error,
             "detected_language": self.detected_language,
@@ -69,3 +73,27 @@ def create_job(source_url: str, user_id: int, max_pages: int) -> Job:
 
 def get_job(job_id: str) -> Job | None:
     return JOBS.get(job_id)
+
+
+def restore_job(run) -> Job:
+    """Reconstructs an in-memory Job from a checkpointed RunRecord (see
+    app.db.get_crawling_runs) so an interrupted crawl can resume from exactly
+    where it left off after a server restart."""
+    job = Job(
+        id=run.id,
+        source_url=run.source_url,
+        user_id=run.user_id,
+        max_pages=float("inf"),
+        status="crawling",
+        started_at=run.created_at,
+        pages={p.url: p for p in run.pages},
+        total_words=run.total_words,
+        limit_reached=run.limit_reached,
+        detected_language=run.language if run.language_auto_detected else None,
+        domain_scope=run.domain_scope,
+        language_setting=None if run.language_auto_detected else run.language,
+        resume_state=run.resume_state,
+        restored_login_blocked_count=run.login_blocked_count,
+    )
+    JOBS[job.id] = job
+    return job

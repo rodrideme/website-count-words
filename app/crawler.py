@@ -182,6 +182,7 @@ def _detect_page_language(html: str | None) -> str | None:
 
 
 PAUSE_AT_WORDS = 100_000
+_CHECKPOINT_EVERY = 20
 
 _process = psutil.Process()
 _MEMORY_LIMIT_BYTES = int(os.environ.get("MEMORY_LIMIT_MB", "3200")) * 1024 * 1024
@@ -192,6 +193,26 @@ def _memory_exceeded() -> bool:
     # dispatcher (psutil.virtual_memory(), host-wide), this reflects what
     # actually counts against a container's cgroup memory limit.
     return _process.memory_info().rss >= _MEMORY_LIMIT_BYTES
+
+
+async def _checkpoint(job, languages: list[str]) -> None:
+    # Persists progress mid-crawl (not just at the end) so a server crash
+    # can auto-resume from here instead of losing everything — see
+    # app.main's startup scan of db.get_crawling_runs().
+    await db.save_run(
+        run_id=job.id,
+        source_url=job.source_url,
+        user_id=job.user_id,
+        status="crawling",
+        total_words=job.total_words,
+        pages=list(job.pages.values()),
+        limit_reached=False,
+        login_blocked_count=len(job.login_blocked) + job.restored_login_blocked_count,
+        domain_scope=job.domain_scope,
+        language=",".join(languages) if languages else None,
+        language_auto_detected=job.detected_language is not None,
+        resume_state=job.resume_state,
+    )
 
 
 async def _discover_sitemap_page_count(url: str, filters: list[URLFilter]) -> int | None:
@@ -415,6 +436,9 @@ async def run_crawl(
                         "total_words": job.total_words,
                     }
                 )
+
+                if len(job.pages) % _CHECKPOINT_EVERY == 0:
+                    await _checkpoint(job, languages)
 
         job.limit_reached = len(job.pages) + len(job.login_blocked) >= max_pages
         if job.cancel_requested:

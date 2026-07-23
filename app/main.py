@@ -18,7 +18,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app import auth, db
 from app.auth import require_user, require_user_api
 from app.crawler import PAUSE_AT_WORDS, run_crawl
-from app.job_store import create_job, get_job
+from app.job_store import create_job, get_job, restore_job
 from app.models import CrawlRequest, User
 from app.templates import templates
 
@@ -28,6 +28,15 @@ _TERMINAL_STATUSES = ("completed", "failed", "cancelled", "paused")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init_db()
+    # Any run still marked "crawling" here was interrupted by a crash/restart
+    # (JOBS is always empty on a fresh process) — pick each one back up from
+    # its last checkpoint rather than leaving it stuck forever.
+    for run in await db.get_crawling_runs():
+        job = restore_job(run)
+        language = job.language_setting or job.detected_language
+        asyncio.create_task(
+            run_crawl(job.id, job.source_url, job.max_pages, job.domain_scope, language, resume_state=job.resume_state)
+        )
     yield
     await db.close_db()
 

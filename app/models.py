@@ -36,6 +36,7 @@ class RunRecord(BaseModel):
     domain_scope: str = "all"
     language: str | None = None
     language_auto_detected: bool = False
+    resume_state: dict | None = None
     pages: list[PageResult]
 
 

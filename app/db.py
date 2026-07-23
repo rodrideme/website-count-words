@@ -81,6 +81,9 @@ async def _ensure_columns() -> None:
     if "language_auto_detected" not in existing:
         await conn.execute("ALTER TABLE runs ADD COLUMN language_auto_detected INTEGER NOT NULL DEFAULT 0")
         await conn.commit()
+    if "resume_state_json" not in existing:
+        await conn.execute("ALTER TABLE runs ADD COLUMN resume_state_json TEXT")
+        await conn.commit()
 
 
 async def close_db() -> None:
@@ -123,6 +126,7 @@ async def get_user(user_id: int) -> User | None:
 
 def _row_to_run(row: aiosqlite.Row) -> RunRecord:
     pages = [PageResult(**p) for p in json.loads(row["pages_json"])]
+    resume_state_json = row["resume_state_json"]
     return RunRecord(
         id=row["id"],
         source_url=row["source_url"],
@@ -136,6 +140,7 @@ def _row_to_run(row: aiosqlite.Row) -> RunRecord:
         domain_scope=row["domain_scope"],
         language=row["language"],
         language_auto_detected=bool(row["language_auto_detected"]),
+        resume_state=json.loads(resume_state_json) if resume_state_json else None,
         pages=pages,
     )
 
@@ -169,23 +174,48 @@ async def save_run(
     domain_scope: str = "all",
     language: str | None = None,
     language_auto_detected: bool = False,
+    resume_state: dict | None = None,
 ) -> None:
     conn = _conn()
     now = datetime.now(timezone.utc).isoformat()
     pages_json = json.dumps([p.model_dump() for p in pages])
+    resume_state_json = json.dumps(resume_state) if resume_state is not None else None
     await conn.execute(
         """
-        INSERT OR REPLACE INTO runs
+        INSERT INTO runs
             (id, source_url, user_id, created_at, status, total_words, page_count, limit_reached,
-             login_blocked_count, domain_scope, language, language_auto_detected, pages_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             login_blocked_count, domain_scope, language, language_auto_detected, resume_state_json, pages_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            status=excluded.status,
+            total_words=excluded.total_words,
+            page_count=excluded.page_count,
+            limit_reached=excluded.limit_reached,
+            login_blocked_count=excluded.login_blocked_count,
+            domain_scope=excluded.domain_scope,
+            language=excluded.language,
+            language_auto_detected=excluded.language_auto_detected,
+            resume_state_json=excluded.resume_state_json,
+            pages_json=excluded.pages_json
         """,
         (
+            # created_at is only ever set on first insert (see ON CONFLICT above) —
+            # periodic checkpointing during a crawl must not keep bumping it forward.
             run_id, source_url, user_id, now, status, total_words, len(pages), int(limit_reached),
-            login_blocked_count, domain_scope, language, int(language_auto_detected), pages_json,
+            login_blocked_count, domain_scope, language, int(language_auto_detected), resume_state_json, pages_json,
         ),
     )
     await conn.commit()
+
+
+async def get_crawling_runs() -> list[RunRecord]:
+    """Runs still marked "crawling" at startup are, by definition, orphaned —
+    JOBS is always empty on a fresh process, so nothing else could still be
+    running one. Used to auto-resume crawls interrupted by a crash/restart."""
+    conn = _conn()
+    async with conn.execute("SELECT * FROM runs WHERE status = 'crawling'") as cur:
+        rows = await cur.fetchall()
+    return [_row_to_run(row) for row in rows]
 
 
 async def list_recent_runs(user_id: int, limit: int = 10) -> list[RunRecord]:
