@@ -169,6 +169,54 @@ function folderForUrl(url) {
   }
 }
 
+const SUMMARY_ROW_LIMIT = 10;
+
+function renderExpandableTableRows(tbody, rows, colSpan, renderRowFn) {
+  const fill = (items) => {
+    tbody.innerHTML = "";
+    for (const item of items) tbody.appendChild(renderRowFn(item));
+  };
+  fill(rows.slice(0, SUMMARY_ROW_LIMIT));
+  if (rows.length <= SUMMARY_ROW_LIMIT) return;
+  const tr = document.createElement("tr");
+  const td = document.createElement("td");
+  td.colSpan = colSpan;
+  td.className = "show-all-row";
+  const link = document.createElement("a");
+  link.href = "#";
+  link.textContent = `Show all ${rows.length.toLocaleString("en-US")}`;
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    fill(rows);
+  });
+  td.appendChild(link);
+  tr.appendChild(td);
+  tbody.appendChild(tr);
+}
+
+function renderFolderRow([folder, stats], maxWords) {
+  const tr = document.createElement("tr");
+
+  const folderTd = document.createElement("td");
+  const bar = document.createElement("div");
+  bar.className = "folder-bar";
+  bar.style.width = Math.max(1, Math.round((stats.words / maxWords) * 100)) + "%";
+  const folderSpan = document.createElement("span");
+  folderSpan.textContent = folder;
+  folderTd.append(bar, folderSpan);
+
+  const countTd = document.createElement("td");
+  countTd.className = "folder-pages";
+  countTd.innerHTML = `<span>${stats.count.toLocaleString("en-US")}</span>`;
+
+  const wordsTd = document.createElement("td");
+  wordsTd.className = "folder-words";
+  wordsTd.innerHTML = `<span>${stats.words.toLocaleString("en-US")}</span>`;
+
+  tr.append(folderTd, countTd, wordsTd);
+  return tr;
+}
+
 function renderFolderGroups(pages) {
   const groups = {};
   for (const p of pages) {
@@ -180,29 +228,7 @@ function renderFolderGroups(pages) {
   const rows = Object.entries(groups).sort((a, b) => b[1].words - a[1].words);
   const maxWords = rows.length ? rows[0][1].words : 1;
   const tbody = document.getElementById("folder-tbody");
-  tbody.innerHTML = "";
-  for (const [folder, stats] of rows) {
-    const tr = document.createElement("tr");
-
-    const folderTd = document.createElement("td");
-    const bar = document.createElement("div");
-    bar.className = "folder-bar";
-    bar.style.width = Math.max(1, Math.round((stats.words / maxWords) * 100)) + "%";
-    const folderSpan = document.createElement("span");
-    folderSpan.textContent = folder;
-    folderTd.append(bar, folderSpan);
-
-    const countTd = document.createElement("td");
-    countTd.className = "folder-pages";
-    countTd.innerHTML = `<span>${stats.count.toLocaleString("en-US")}</span>`;
-
-    const wordsTd = document.createElement("td");
-    wordsTd.className = "folder-words";
-    wordsTd.innerHTML = `<span>${stats.words.toLocaleString("en-US")}</span>`;
-
-    tr.append(folderTd, countTd, wordsTd);
-    tbody.appendChild(tr);
-  }
+  renderExpandableTableRows(tbody, rows, 3, (row) => renderFolderRow(row, maxWords));
 }
 
 // Same ISO 639-1 set and first-path-segment heuristic as the backend's
@@ -266,54 +292,49 @@ function renderLanguageGroups(pages) {
   }
   const maxWords = rows[0][1].words || 1;
   const tbody = document.getElementById("language-tbody");
-  tbody.innerHTML = "";
-  for (const [lang, stats] of rows) {
-    const tr = document.createElement("tr");
-
-    const langTd = document.createElement("td");
-    const bar = document.createElement("div");
-    bar.className = "folder-bar";
-    bar.style.width = Math.max(1, Math.round((stats.words / maxWords) * 100)) + "%";
-    const langSpan = document.createElement("span");
-    langSpan.textContent = lang;
-    langTd.append(bar, langSpan);
-
-    const countTd = document.createElement("td");
-    countTd.className = "folder-pages";
-    countTd.innerHTML = `<span>${stats.count.toLocaleString("en-US")}</span>`;
-
-    const wordsTd = document.createElement("td");
-    wordsTd.className = "folder-words";
-    wordsTd.innerHTML = `<span>${stats.words.toLocaleString("en-US")}</span>`;
-
-    tr.append(langTd, countTd, wordsTd);
-    tbody.appendChild(tr);
-  }
+  renderExpandableTableRows(tbody, rows, 3, (row) => renderFolderRow(row, maxWords));
   section.style.display = "";
+}
+
+function renderPageListItem(page, i) {
+  const li = document.createElement("li");
+  const rank = document.createElement("span");
+  rank.className = "rank";
+  rank.textContent = i + 1;
+  const path = document.createElement("span");
+  path.className = "path";
+  path.title = page.url;
+  path.textContent = page.url;
+  const words = document.createElement("span");
+  words.className = "words";
+  words.textContent = page.word_count.toLocaleString("en-US");
+  li.append(rank, path, words);
+  return li;
 }
 
 function renderTopPages(pages) {
   const list = document.getElementById("top-pages-list");
-  list.innerHTML = "";
-  const top = pages
-    .filter((p) => p.success)
-    .sort((a, b) => b.word_count - a.word_count)
-    .slice(0, 5);
-  top.forEach((page, i) => {
+  const top = pages.filter((p) => p.success).sort((a, b) => b.word_count - a.word_count);
+
+  const fill = (items) => {
+    list.innerHTML = "";
+    items.forEach((page, i) => list.appendChild(renderPageListItem(page, i)));
+  };
+  fill(top.slice(0, SUMMARY_ROW_LIMIT));
+
+  if (top.length > SUMMARY_ROW_LIMIT) {
     const li = document.createElement("li");
-    const rank = document.createElement("span");
-    rank.className = "rank";
-    rank.textContent = i + 1;
-    const path = document.createElement("span");
-    path.className = "path";
-    path.title = page.url;
-    path.textContent = page.url;
-    const words = document.createElement("span");
-    words.className = "words";
-    words.textContent = page.word_count.toLocaleString("en-US");
-    li.append(rank, path, words);
+    li.className = "show-all-row";
+    const link = document.createElement("a");
+    link.href = "#";
+    link.textContent = `Show all ${top.length.toLocaleString("en-US")}`;
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      fill(top);
+    });
+    li.appendChild(link);
     list.appendChild(li);
-  });
+  }
 }
 
 function pagesToCsv(pages) {
@@ -386,6 +407,23 @@ function initCrawlPage(opts) {
   const adjustBtn = document.getElementById("adjust-btn");
 
   const pageIssuesNote = document.getElementById("page-issues-note");
+  const pageIssuesDetails = document.getElementById("page-issues-details");
+  const pageIssuesList = document.getElementById("page-issues-list");
+
+  const renderIssuesList = (issues) => {
+    pageIssuesList.innerHTML = "";
+    for (const p of issues) {
+      const li = document.createElement("li");
+      const urlSpan = document.createElement("span");
+      urlSpan.className = "issue-url";
+      urlSpan.textContent = p.url;
+      const reasonSpan = document.createElement("span");
+      reasonSpan.className = "issue-reason";
+      reasonSpan.textContent = (p.blocked_by_host ? "Blocked: " : "Failed: ") + (p.error || "Unknown reason");
+      li.append(urlSpan, reasonSpan);
+      pageIssuesList.appendChild(li);
+    }
+  };
 
   const updateBlockedHostCount = (pages) => {
     const blocked = pages.filter((p) => p.blocked_by_host);
@@ -408,6 +446,7 @@ function initCrawlPage(opts) {
 
     if (!lines.length) {
       pageIssuesNote.style.display = "none";
+      pageIssuesDetails.style.display = "none";
       return;
     }
     pageIssuesNote.textContent = "";
@@ -416,6 +455,9 @@ function initCrawlPage(opts) {
       pageIssuesNote.appendChild(document.createTextNode(line));
     });
     pageIssuesNote.style.display = "block";
+
+    renderIssuesList([...blocked, ...otherFailed]);
+    pageIssuesDetails.style.display = "block";
   };
 
   const showDetectedLanguage = (code) => {

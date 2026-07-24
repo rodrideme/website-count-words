@@ -371,6 +371,45 @@ ul.recent-runs a.run-row:hover { background: #FCFBF8; text-decoration: none; }
   margin-bottom: 20px;
 }
 
+#page-issues-details {
+  margin: -8px 0 20px;
+  font-size: 13px;
+}
+#page-issues-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 600;
+}
+#page-issues-details summary:hover { color: var(--text); }
+ul.issues-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+ul.issues-list li {
+  padding: 8px 12px;
+  border-bottom: 1px solid #F0EDE4;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+ul.issues-list li:last-child { border-bottom: none; }
+ul.issues-list .issue-url {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-all;
+}
+ul.issues-list .issue-reason {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* ---------- Action row ---------- */
 .action-row {
   display: flex;
@@ -478,6 +517,16 @@ table.folder-table td.folder-pages { color: var(--muted); }
   z-index: 0;
 }
 table.folder-table td > span { position: relative; z-index: 1; }
+
+td.show-all-row, li.show-all-row {
+  text-align: center;
+  padding-top: 12px;
+}
+td.show-all-row a, li.show-all-row a {
+  font-size: 13px;
+  font-weight: 600;
+}
+li.show-all-row { justify-content: center; }
 
 ol#top-pages-list { list-style: none; padding: 0; margin: 0; }
 ol#top-pages-list li {

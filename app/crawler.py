@@ -87,6 +87,30 @@ class TopDomainOnlyFilter(URLFilter):
         return passed
 
 
+# Extensions a browser treats as a download rather than something to render
+# — navigating to one of these with Playwright fails with a "Download is
+# starting" error instead of ever producing page text, so they're skipped
+# before ever being fetched rather than counted as crawl failures.
+_DOWNLOAD_EXTENSIONS = {
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".zip", ".rar", ".7z", ".tar", ".gz",
+    ".mp3", ".mp4", ".mov", ".avi", ".wmv", ".wav",
+    ".exe", ".dmg", ".apk",
+    ".jpg", ".jpeg", ".png", ".gif", ".svg", ".webp", ".ico", ".bmp",
+}
+
+
+class SkipDownloadsFilter(URLFilter):
+    def __init__(self):
+        super().__init__(name="SkipDownloadsFilter")
+
+    def apply(self, url: str) -> bool:
+        path = urlparse(url).path.lower()
+        passed = not any(path.endswith(ext) for ext in _DOWNLOAD_EXTENSIONS)
+        self._update_stats(passed)
+        return passed
+
+
 # ISO 639-1 two-letter language codes — a stable, unchanging standard, used
 # to recognize language-prefixed path segments (e.g. /en/, /fr/) without
 # needing an external lookup.
@@ -257,6 +281,21 @@ async def _build_estimate_result(job, url: str, filters: list[URLFilter]) -> dic
     }
 
 
+def _clean_error_message(message: str) -> str:
+    """crawl4ai sometimes formats an internal exception with a full
+    traceback-style dump attached (file paths, line numbers, a "Code
+    context:" listing) — strip that down to just the human-readable reason
+    before it ever reaches the UI."""
+    if not message:
+        return "Failed to fetch page"
+    message = message.split("Code context:")[0].strip()
+    if "Download is starting" in message:
+        return "This link points to a downloadable file, not a webpage"
+    if len(message) > 200:
+        message = message[:200].rstrip() + "…"
+    return message
+
+
 def _is_login_wall(result) -> bool:
     """Heuristic: crawl4ai has no dedicated "requires login" signal, so this
     combines the strongest hints available — an outright auth status code,
@@ -313,6 +352,27 @@ async def run_crawl(
     elif domain_scope == "top_domain_only":
         domain_filters.append(TopDomainOnlyFilter(get_base_domain(url)))
 
+    start_base_domain = get_base_domain(url)
+
+    def _post_fetch_scope_violation(result) -> bool:
+        # crawl4ai's own domain-scope enforcement (include_external,
+        # DomainFilter, TopDomainOnlyFilter) only ever checks a link's
+        # pre-fetch candidate URL — it's never re-validated against where
+        # the fetch actually landed. A same-domain-looking link that
+        # server- or JS-redirects off-domain would otherwise be silently
+        # scraped and counted as part of this site (result.url stays
+        # pinned to the pre-redirect string, so it'd even look on-domain
+        # in the report). result.redirected_url does correctly capture the
+        # real destination, so use that — or plain result.url if there was
+        # no redirect — for a final check this app controls directly.
+        final_url = getattr(result, "redirected_url", None) or result.url
+        try:
+            if get_base_domain(final_url) != start_base_domain:
+                return True
+        except Exception:
+            return False
+        return not all(f.apply(final_url) for f in domain_filters)
+
     languages = parse_languages(language)
 
     browser_config = BrowserConfig(
@@ -344,6 +404,7 @@ async def run_crawl(
             job.publish(job.status_payload())
 
             filters = list(domain_filters)
+            filters.append(SkipDownloadsFilter())
             if languages:
                 filters.append(LanguageFilter(languages))
             filter_chain = FilterChain(filters)
@@ -406,6 +467,14 @@ async def run_crawl(
                 if result.url in job.pages or result.url in job.login_blocked:
                     continue
 
+                if result.success and _post_fetch_scope_violation(result):
+                    # A redirect took this off the intended domain(s) — see
+                    # _post_fetch_scope_violation for why crawl4ai's own
+                    # filtering doesn't already catch this. Not real content
+                    # for this site, so it's excluded entirely rather than
+                    # counted as a page or even shown as a failure.
+                    continue
+
                 title = ""
                 if result.metadata:
                     title = result.metadata.get("title") or ""
@@ -436,7 +505,7 @@ async def run_crawl(
                     page = PageResult(url=result.url, title=title, word_count=word_count, success=True)
                     job.total_words += word_count
                 else:
-                    error_message = getattr(result, "error_message", None) or "Failed to fetch page"
+                    raw_error = getattr(result, "error_message", None) or "Failed to fetch page"
                     # Crawl4AI runs its own layered anti-bot detection (Cloudflare/
                     # Akamai/PerimeterX/DataDome challenge pages, 429 rate limits,
                     # structurally-broken "empty shell" responses — see
@@ -448,8 +517,8 @@ async def run_crawl(
                         title="",
                         word_count=0,
                         success=False,
-                        blocked_by_host=error_message.startswith("Blocked by anti-bot protection:"),
-                        error=error_message,
+                        blocked_by_host=raw_error.startswith("Blocked by anti-bot protection:"),
+                        error=_clean_error_message(raw_error),
                     )
 
                 job.pages[result.url] = page
