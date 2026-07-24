@@ -49,6 +49,8 @@ input:focus, select:focus { outline: 2px solid var(--brand); outline-offset: -1p
 
 /* ---------- Logo ---------- */
 .logo { display: flex; align-items: center; gap: 10px; }
+a.logo { color: var(--text); }
+a.logo:hover { color: var(--text); text-decoration: none; }
 .logo-mark {
   width: 28px; height: 28px;
   background: var(--brand);
@@ -231,7 +233,49 @@ button.danger-outline:hover { border-color: var(--danger-text); background: var(
 }
 .login-card .subtitle { max-width: 340px; line-height: 1.5; font-size: 16px; margin: 0; }
 
-/* ---------- Recent runs (home page) ---------- */
+/* ---------- Run lists (home page, all runs, admin) ---------- */
+.list-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+.list-head a { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.back-link { font-size: 13px; color: var(--muted); }
+.back-link:hover { color: var(--text); }
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 24px;
+}
+.filter-row input[type="search"] {
+  flex: 1;
+  min-width: 0;
+  max-width: 420px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 14px;
+  font-size: 14px;
+  background: var(--bg-input);
+  color: var(--text);
+}
+.filter-row a { font-size: 13px; color: var(--muted); }
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  margin-top: 28px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.pagination .muted { font-weight: 400; }
+.pagination .disabled { color: var(--faint); }
+
 .section-label {
   font-size: 13px;
   font-weight: 600;
@@ -244,12 +288,26 @@ ul.recent-runs { list-style: none; padding: 0; margin: 0; border-top: 1px solid 
 ul.recent-runs li { border-bottom: 1px solid var(--border); }
 ul.recent-runs a.run-row {
   display: grid;
-  grid-template-columns: 1fr auto auto auto auto;
+  /* Fixed tracks rather than auto: every row is its own grid, so auto columns
+     size to that row's own content and the numbers wouldn't line up down the
+     list. minmax(0, …) lets a long URL ellipsize instead of widening the row. */
+  grid-template-columns: minmax(0, 1fr) 132px 84px 100px 172px;
   gap: 20px;
   align-items: center;
   padding: 14px 4px;
   color: var(--text);
   text-decoration: none;
+}
+ul.recent-runs .run-words, ul.recent-runs .run-pages, ul.recent-runs .run-date { text-align: right; }
+
+@media (max-width: 720px) {
+  ul.recent-runs a.run-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+  }
+  ul.recent-runs .run-url { flex: 1 0 100%; }
+  ul.recent-runs .run-words, ul.recent-runs .run-pages, ul.recent-runs .run-date { text-align: left; }
 }
 ul.recent-runs a.run-row:hover { background: #FCFBF8; text-decoration: none; }
 .run-url { font-family: var(--font-mono); font-size: 13px; color: var(--brand); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -780,6 +838,9 @@ ol#top-pages-list .words { font-family: var(--font-mono); font-size: 13px; font-
   overflow: auto;
   box-shadow: 0 1px 3px rgba(25, 23, 18, 0.05);
 }
+/* Paginated tables page rather than scroll — an inner scrollbar on top of
+   page links makes it unclear which one moves you through the list. */
+.table-scroll.table-paged { max-height: none; }
 table { width: 100%; border-collapse: collapse; margin: 0; font-size: 13px; }
 th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid #F0EDE4; }
 th {
@@ -798,6 +859,9 @@ th {
 td.url-cell { font-family: var(--font-mono); font-size: 12px; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 td.words-cell { font-family: var(--font-mono); font-weight: 600; text-align: right; white-space: nowrap; }
 th:nth-child(3) { text-align: right; }
+/* Opt out of / into that positional rule where the column order differs. */
+th.col-left { text-align: left; }
+th.col-num { text-align: right; }
 tr.page-failed { color: var(--danger-text); }
 tr.page-failed td.url-cell { color: var(--danger-text); }
 tr.page-blocked-host { color: var(--warn-text); background: var(--blocked-row-bg); }

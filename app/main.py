@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 from contextlib import asynccontextmanager
-from urllib.parse import urlsplit
+from urllib.parse import quote_plus, urlsplit
 
 from dotenv import load_dotenv
 
@@ -79,15 +80,42 @@ def _sse(event_type: str, data: dict) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
 
+HOME_RUNS = 10
+RUNS_PER_PAGE = 25
+
+
+def _page_count(total: int, per_page: int) -> int:
+    return max(1, math.ceil(total / per_page))
+
+
 @app.get("/")
 async def index(request: Request, user: User = Depends(require_user)):
-    recent_runs = await db.list_recent_runs(user.id)
+    recent_runs = await db.list_user_runs(user.id, limit=HOME_RUNS)
     return templates.TemplateResponse(
         request,
         "index.html",
         {
             "user": user,
             "recent_runs": recent_runs,
+            "total_runs": await db.count_user_runs(user.id),
+        },
+    )
+
+
+@app.get("/runs")
+async def all_runs(request: Request, page: int = 1, user: User = Depends(require_user)):
+    page = max(1, page)
+    total = await db.count_user_runs(user.id)
+    return templates.TemplateResponse(
+        request,
+        "runs.html",
+        {
+            "user": user,
+            "runs": await db.list_user_runs(user.id, limit=RUNS_PER_PAGE, offset=(page - 1) * RUNS_PER_PAGE),
+            "page": page,
+            "page_count": _page_count(total, RUNS_PER_PAGE),
+            "total": total,
+            "base_url": "/runs?",
         },
     )
 
@@ -400,6 +428,25 @@ async def admin_jobs(request: Request, admin: User = Depends(require_admin)):
     jobs = [await _job_summary(job) for job in list_active_jobs()]
     queued_jobs = [await _job_summary(job) for job in list_queued_jobs()]
     return templates.TemplateResponse(request, "admin_jobs.html", {"jobs": jobs, "queued_jobs": queued_jobs})
+
+
+@app.get("/admin/runs")
+async def admin_runs(request: Request, page: int = 1, q: str = "", admin: User = Depends(require_admin)):
+    page = max(1, page)
+    query = q.strip()
+    total = await db.count_all_runs(query)
+    return templates.TemplateResponse(
+        request,
+        "admin_runs.html",
+        {
+            "runs": await db.list_all_runs(limit=RUNS_PER_PAGE, offset=(page - 1) * RUNS_PER_PAGE, query=query),
+            "page": page,
+            "page_count": _page_count(total, RUNS_PER_PAGE),
+            "total": total,
+            "query": query,
+            "base_url": f"/admin/runs?q={quote_plus(query)}&",
+        },
+    )
 
 
 @app.post("/admin/jobs/{job_id}/cancel")

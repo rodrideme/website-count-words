@@ -1,18 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Website Word Counter{% endblock %}
 {% block body %}
-  <header class="topbar">
-    <div class="logo">
-      <div class="logo-mark">#</div>
-      <div class="logo-name">Word Counter</div>
-    </div>
-    <div class="user-chip">
-      {% if user.picture %}<img src="{{ user.picture }}" alt="">{% else %}<span class="avatar">{{ user.name[0] | upper }}</span>{% endif %}
-      <span class="name">{{ user.name }}</span>
-      <span class="sep"></span>
-      <a href="/logout">Log out</a>
-    </div>
-  </header>
+  {% include "_topbar.html" %}
 
   <div class="page-wrap">
     <p class="subtitle">Crawl a website and count every word it contains — total, per page, per folder.</p>
@@ -30,21 +19,14 @@
     <p class="field-error" id="form-error" style="display:none;"></p>
 
     <div style="margin-top:52px;">
-      <div class="section-label">Your recent runs</div>
+      <div class="list-head">
+        <div class="section-label">Your recent runs</div>
+        {% if total_runs > recent_runs|length %}
+        <a href="/runs">See all {{ "{:,}".format(total_runs) }} →</a>
+        {% endif %}
+      </div>
       {% if recent_runs %}
-        <ul class="recent-runs">
-          {% for run in recent_runs %}
-            <li>
-              <a href="/crawl/{{ run.id }}" class="run-row">
-                <span class="run-url">{{ run.source_url }}</span>
-                <span class="run-words">{{ "{:,}".format(run.total_words) }} words</span>
-                <span class="run-pages">{{ "{:,}".format(run.page_count) }} pages</span>
-                <span class="status-badge status-{{ run.status }}">{{ run.status | capitalize }}</span>
-                <span class="run-date recent-run-date" data-iso="{{ run.created_at }}"></span>
-              </a>
-            </li>
-          {% endfor %}
-        </ul>
+        {% with runs = recent_runs %}{% include "_run_list.html" %}{% endwith %}
       {% else %}
         <p class="muted">No crawls yet — try one above.</p>
       {% endif %}
@@ -54,8 +36,6 @@
   <script src="/static/app.js"></script>
   <script>
     initHomeForm();
-    for (const el of document.querySelectorAll(".recent-run-date")) {
-      el.textContent = formatDate(el.dataset.iso);
-    }
+    formatRunDates();
   </script>
 {% endblock %}

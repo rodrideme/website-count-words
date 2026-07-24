@@ -1,0 +1,15 @@
+{% if page_count > 1 %}
+<nav class="pagination">
+  {% if page > 1 %}
+    <a href="{{ base_url }}page={{ page - 1 }}">← Newer</a>
+  {% else %}
+    <span class="disabled">← Newer</span>
+  {% endif %}
+  <span class="muted">Page {{ page }} of {{ "{:,}".format(page_count) }}</span>
+  {% if page < page_count %}
+    <a href="{{ base_url }}page={{ page + 1 }}">Older →</a>
+  {% else %}
+    <span class="disabled">Older →</span>
+  {% endif %}
+</nav>
+{% endif %}

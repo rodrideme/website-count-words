@@ -123,6 +123,14 @@ function formatDate(iso) {
   return `${datePart} · ${timePart}`;
 }
 
+// Run timestamps are stored as UTC and rendered server-side as a raw ISO
+// string, so the browser is what turns them into the reader's local time.
+function formatRunDates() {
+  for (const el of document.querySelectorAll(".run-date-iso")) {
+    el.textContent = formatDate(el.dataset.iso);
+  }
+}
+
 function formatDuration(totalSeconds) {
   if (!totalSeconds || totalSeconds < 1) return "less than a minute";
   const totalMinutes = Math.round(totalSeconds / 60);

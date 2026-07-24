@@ -414,11 +414,74 @@ async def list_estimate_history() -> list[dict]:
     return [dict(row) for row in rows]
 
 
-async def list_recent_runs(user_id: int, limit: int = 10) -> list[RunRecord]:
+# Listing screens show one line per run and never touch the page rows, so they
+# deliberately avoid pages_json — parsing it for every run is what would make
+# "all runs" expensive on an account (or a server) with a lot of history.
+_RUN_SUMMARY_COLUMNS = "id, source_url, created_at, status, total_words, page_count, is_public"
+
+
+def _row_to_run_summary(row: aiosqlite.Row) -> dict:
+    summary = {
+        "id": row["id"],
+        "source_url": row["source_url"],
+        "created_at": row["created_at"],
+        "status": row["status"],
+        "total_words": row["total_words"],
+        "page_count": row["page_count"],
+        "is_public": bool(row["is_public"]),
+    }
+    if "owner_email" in row.keys():
+        summary["owner_email"] = row["owner_email"]
+        summary["owner_name"] = row["owner_name"]
+    return summary
+
+
+async def count_user_runs(user_id: int) -> int:
+    conn = _conn()
+    async with conn.execute("SELECT COUNT(*) AS n FROM runs WHERE user_id = ?", (user_id,)) as cur:
+        row = await cur.fetchone()
+    return row["n"]
+
+
+async def list_user_runs(user_id: int, limit: int = 10, offset: int = 0) -> list[dict]:
     conn = _conn()
     async with conn.execute(
-        "SELECT * FROM runs WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
-        (user_id, limit),
+        f"SELECT {_RUN_SUMMARY_COLUMNS} FROM runs WHERE user_id = ?"
+        " ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        (user_id, limit, offset),
     ) as cur:
         rows = await cur.fetchall()
-    return [_row_to_run(row) for row in rows]
+    return [_row_to_run_summary(row) for row in rows]
+
+
+def _all_runs_filter(query: str) -> tuple[str, list]:
+    """Admin search matches the crawled site or the owner's email/name."""
+    if not query:
+        return "", []
+    like = f"%{query}%"
+    return " WHERE r.source_url LIKE ? OR u.email LIKE ? OR u.name LIKE ?", [like, like, like]
+
+
+async def count_all_runs(query: str = "") -> int:
+    conn = _conn()
+    where, params = _all_runs_filter(query)
+    async with conn.execute(
+        f"SELECT COUNT(*) AS n FROM runs r JOIN users u ON u.id = r.user_id{where}", params
+    ) as cur:
+        row = await cur.fetchone()
+    return row["n"]
+
+
+async def list_all_runs(limit: int = 50, offset: int = 0, query: str = "") -> list[dict]:
+    """Every user's runs, newest first — admin only."""
+    conn = _conn()
+    where, params = _all_runs_filter(query)
+    columns = ", ".join(f"r.{c}" for c in _RUN_SUMMARY_COLUMNS.split(", "))
+    async with conn.execute(
+        f"SELECT {columns}, u.email AS owner_email, u.name AS owner_name"
+        f" FROM runs r JOIN users u ON u.id = r.user_id{where}"
+        " ORDER BY r.created_at DESC LIMIT ? OFFSET ?",
+        [*params, limit, offset],
+    ) as cur:
+        rows = await cur.fetchall()
+    return [_row_to_run_summary(row) for row in rows]

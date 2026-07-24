@@ -1,0 +1,13 @@
+<ul class="recent-runs">
+  {% for run in runs %}
+    <li>
+      <a href="/crawl/{{ run.id }}" class="run-row">
+        <span class="run-url">{{ run.source_url }}</span>
+        <span class="run-words">{{ "{:,}".format(run.total_words) }} words</span>
+        <span class="run-pages">{{ "{:,}".format(run.page_count) }} pages</span>
+        <span class="status-badge status-{{ run.status }}">{{ run.status | capitalize }}</span>
+        <span class="run-date run-date-iso" data-iso="{{ run.created_at }}"></span>
+      </a>
+    </li>
+  {% endfor %}
+</ul>

@@ -2,7 +2,7 @@
 {% block title %}Server Jobs — Admin{% endblock %}
 {% block body %}
   <div class="page-wrap">
-    <p class="subtitle">Everything actively crawling on this server right now, across every user. <a href="/admin/estimates">Estimate accuracy →</a></p>
+    <p class="subtitle">Everything actively crawling on this server right now, across every user. <a href="/admin/runs">All runs →</a> <a href="/admin/estimates">Estimate accuracy →</a></p>
 
     <div class="action-row">
       <button id="cancel-all-btn" class="danger-outline" {% if not jobs and not queued_jobs %}disabled{% endif %}>Cancel all ({{ (jobs|length) + (queued_jobs|length) }})</button>
