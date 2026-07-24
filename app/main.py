@@ -88,17 +88,14 @@ async def start_crawl(payload: CrawlRequest, user: User = Depends(require_user_a
 
     source_url = db.normalize_url(url)
 
-    # An estimate always runs fresh — the point is to preview this exact
-    # settings combination, even if the site's been crawled before.
-    if not payload.force_recrawl and not payload.estimate:
+    if not payload.force_recrawl:
         cached = await db.get_latest_run(source_url)
         if cached is not None:
             return JSONResponse({"cached": True, "run_id": cached.id})
 
-    pause_at_words = PAUSE_AT_WORDS if payload.estimate else None
     job = create_job(source_url=source_url, user_id=user.id, max_pages=max_pages)
     job.task = asyncio.create_task(
-        run_crawl(job.id, source_url, max_pages, payload.domain_scope, payload.language, pause_at_words=pause_at_words)
+        run_crawl(job.id, source_url, max_pages, payload.domain_scope, payload.language, pause_at_words=PAUSE_AT_WORDS)
     )
     return JSONResponse({"cached": False, "run_id": job.id})
 

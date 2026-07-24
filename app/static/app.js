@@ -25,7 +25,6 @@ function initHomeForm() {
   const form = document.getElementById("crawl-form");
   const errorEl = document.getElementById("form-error");
   const submitBtn = document.getElementById("submit-btn");
-  const estimateBtn = document.getElementById("estimate-btn");
   const urlInput = document.getElementById("url");
   const domainScopeSelect = document.getElementById("domain_scope");
   const languageInput = document.getElementById("language");
@@ -37,12 +36,11 @@ function initHomeForm() {
     }
   });
 
-  const startCrawl = async (estimate) => {
-    const triggerBtn = estimate ? estimateBtn : submitBtn;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
     errorEl.style.display = "none";
     submitBtn.disabled = true;
-    estimateBtn.disabled = true;
-    triggerBtn.textContent = estimate ? "Estimating…" : "Starting…";
+    submitBtn.textContent = "Starting…";
 
     const url = urlInput.value;
     const domainScope = domainScopeSelect.value;
@@ -52,7 +50,7 @@ function initHomeForm() {
       const res = await fetch("/crawl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, domain_scope: domainScope, language, estimate }),
+        body: JSON.stringify({ url, domain_scope: domainScope, language }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -63,18 +61,9 @@ function initHomeForm() {
       errorEl.textContent = err.message;
       errorEl.style.display = "block";
       submitBtn.disabled = false;
-      estimateBtn.disabled = false;
       submitBtn.textContent = "Crawl";
-      estimateBtn.textContent = "Estimate first";
     }
-  };
-
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    startCrawl(false);
   });
-
-  estimateBtn.addEventListener("click", () => startCrawl(true));
 }
 
 function badgeClass(status) {
@@ -403,12 +392,21 @@ function initCrawlPage(opts) {
   const estimateAvgWordsEl = document.getElementById("estimate-avg-words");
   const estimateTotalWordsEl = document.getElementById("estimate-total-words");
   const estimateMessageEl = document.getElementById("estimate-message");
+  const estimateConfidenceBadge = document.getElementById("estimate-confidence-badge");
+  const estimateCmsPill = document.getElementById("estimate-cms-pill");
   const proceedBtn = document.getElementById("proceed-btn");
   const adjustBtn = document.getElementById("adjust-btn");
 
   const pageIssuesNote = document.getElementById("page-issues-note");
   const pageIssuesDetails = document.getElementById("page-issues-details");
   const pageIssuesList = document.getElementById("page-issues-list");
+  const tryDifferentPageNote = document.getElementById("try-different-page-note");
+
+  const showTryDifferentPageNote = (totalWords, pageCount) => {
+    // Only meaningful once a crawl has actually finished — total_words is
+    // naturally 0 for the first moment of any crawl, not just a failed one.
+    tryDifferentPageNote.style.display = (pageCount > 0 && totalWords === 0) ? "block" : "none";
+  };
 
   const renderIssuesList = (issues) => {
     pageIssuesList.innerHTML = "";
@@ -434,7 +432,7 @@ function initCrawlPage(opts) {
     if (blocked.length) {
       const sample = blocked[0].error || "the site's own bot detection";
       lines.push(blocked.length === 1
-        ? `This site blocked our crawler and replied: "${sample}"`
+        ? `1 page was blocked by this site's own bot detection — it replied: "${sample}"`
         : `${blocked.length.toLocaleString("en-US")} pages were blocked by this site's own bot detection — e.g.: "${sample}"`);
     }
     if (otherFailed.length) {
@@ -480,15 +478,32 @@ function initCrawlPage(opts) {
     renderSettingsPills(domainScope, languages, !languageSetting && !!detectedLanguage);
   };
 
+  const CONFIDENCE_LABELS = { high: "High confidence", medium: "Medium confidence", low: "Low confidence" };
+
   const showEstimatePanel = (result) => {
     if (!result) return;
     estimatePagesFetchedEl.textContent = result.pages_fetched.toLocaleString("en-US");
     estimateTotalPagesEl.textContent = result.total_pages_estimate.toLocaleString("en-US");
     estimateAvgWordsEl.textContent = result.avg_words_per_page.toLocaleString("en-US");
     estimateTotalWordsEl.textContent = result.estimated_total_words.toLocaleString("en-US");
-    estimateMessageEl.textContent =
-      `This site has approximately ${result.total_pages_estimate.toLocaleString("en-US")} pages` +
-      " — crawling all of them may take a while.";
+
+    estimateConfidenceBadge.textContent = CONFIDENCE_LABELS[result.confidence] || "";
+    estimateConfidenceBadge.className = "pill confidence-badge confidence-" + (result.confidence || "low");
+
+    if (result.detected_cms) {
+      estimateCmsPill.textContent = result.detected_cms === "Contentful"
+        ? "Detected platform: Contentful (headless — sitemap conventions vary)"
+        : `Detected platform: ${result.detected_cms}`;
+      estimateCmsPill.style.display = "";
+    } else {
+      estimateCmsPill.style.display = "none";
+    }
+
+    const pagesText = result.total_pages_estimate.toLocaleString("en-US");
+    estimateMessageEl.textContent = result.sitemap_found
+      ? `Found a sitemap — this site has approximately ${pagesText} pages. Crawling all of them may take a while.`
+      : `No sitemap found — this estimate is based only on pages discovered so far (approximately ${pagesText}), so it may be less accurate. Crawling all of them may take a while.`;
+
     actionRow.style.display = "none";
     estimatePanel.style.display = "block";
   };
@@ -561,6 +576,7 @@ function initCrawlPage(opts) {
     if (opts.initialLimitReached) showLimitNote();
     if (opts.initialStatus === "failed") showError();
     if (opts.initialStatus === "cancelled") cancelNote.style.display = "block";
+    showTryDifferentPageNote(opts.initialTotalWords, opts.initialPageCount);
     const initialPages = opts.initialPages || [];
     for (const page of initialPages) {
       renderPageRow(tbody, page);
@@ -634,6 +650,7 @@ function initCrawlPage(opts) {
       if (TERMINAL_STATUSES.includes(data.status)) {
         cancelBtn.style.display = "none";
         renderSummary(pages);
+        showTryDifferentPageNote(data.total_words, data.page_count);
         source.close();
         if (data.status === "paused") {
           showEstimatePanel(data.estimate_result);

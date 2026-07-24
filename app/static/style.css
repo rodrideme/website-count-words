@@ -448,6 +448,16 @@ ul.issues-list .issue-reason {
   margin-bottom: 44px;
   box-shadow: 0 1px 3px rgba(25, 23, 18, 0.05);
 }
+.estimate-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0 4px;
+}
+.confidence-badge.confidence-high { background: var(--success-bg); color: var(--success-text); border-color: transparent; }
+.confidence-badge.confidence-medium { background: var(--warn-bg); color: var(--warn-text); border-color: transparent; }
+.confidence-badge.confidence-low { background: var(--neutral-bg); color: var(--neutral-text); border-color: transparent; }
 .estimate-stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

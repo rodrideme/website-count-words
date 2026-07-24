@@ -45,4 +45,3 @@ class CrawlRequest(BaseModel):
     domain_scope: Literal["all", "subdomain_only", "top_domain_only"] = "all"
     language: str | None = None
     force_recrawl: bool = False
-    estimate: bool = False

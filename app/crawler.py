@@ -208,7 +208,7 @@ def _detect_page_language(html: str | None) -> str | None:
     return code if len(code) == 2 and code in _ISO_639_1_CODES else None
 
 
-PAUSE_AT_WORDS = 100_000
+PAUSE_AT_WORDS = 50_000
 _CHECKPOINT_EVERY = 20
 
 _process = psutil.Process()
@@ -262,6 +262,86 @@ async def _discover_sitemap_page_count(url: str, filters: list[URLFilter]) -> in
     return len(urls) if urls else None
 
 
+# Regex signatures matched against already-fetched page HTML/headers — no
+# extra network requests. Each pattern is weighted: 2 for a strong, highly
+# specific signal (a generator meta tag, the WordPress REST API discovery
+# header) where a single hit is trustworthy on its own, 1 for a weaker
+# asset-path substring that could coincidentally appear once, requiring a
+# second hit (on any page) before it's trusted — see _resolve_detected_cms.
+# CMS platforms with a well-known, standard sitemap convention (as opposed
+# to Contentful, a headless CMS whose sitemap behavior depends entirely on
+# whatever frontend framework sits on top).
+_CMS_SIGNATURES: dict[str, list[tuple[re.Pattern, int]]] = {
+    "WordPress": [
+        (re.compile(r'name=["\']generator["\'][^>]*content=["\']WordPress', re.IGNORECASE), 2),
+        (re.compile(r'/wp-content/'), 1),
+        (re.compile(r'/wp-includes/'), 1),
+    ],
+    "Webflow": [
+        (re.compile(r'data-wf-page='), 2),
+        (re.compile(r'name=["\']generator["\'][^>]*content=["\']Webflow', re.IGNORECASE), 2),
+        (re.compile(r'assets\.website-files\.com'), 1),
+    ],
+    "Shopify": [
+        (re.compile(r'cdn\.shopify\.com'), 1),
+        (re.compile(r'Shopify\.theme'), 2),
+    ],
+    "Squarespace": [
+        (re.compile(r'static1\.squarespace\.com'), 1),
+        (re.compile(r'name=["\']generator["\'][^>]*content=["\']Squarespace', re.IGNORECASE), 2),
+    ],
+    "Wix": [
+        (re.compile(r'static\.wixstatic\.com'), 1),
+        (re.compile(r'name=["\']generator["\'][^>]*content=["\']Wix', re.IGNORECASE), 2),
+    ],
+    "Ghost": [
+        (re.compile(r'name=["\']generator["\'][^>]*content=["\']Ghost', re.IGNORECASE), 2),
+    ],
+    "Drupal": [
+        (re.compile(r'Drupal\.settings'), 2),
+        (re.compile(r'/sites/default/files/'), 1),
+    ],
+    "Contentful": [
+        (re.compile(r'ctfassets\.net'), 1),
+        (re.compile(r'cdn\.contentful\.com'), 1),
+    ],
+}
+_WORDPRESS_REST_LINK_RE = re.compile(r'rel="https://api\.w\.org/"')
+# CMS platforms whose sitemap conventions are standard/well-known enough that
+# detecting them corroborates a found sitemap's completeness. Contentful is
+# deliberately excluded — see the note above.
+_SITEMAP_CONVENTION_CMS = {"WordPress", "Webflow", "Shopify", "Squarespace", "Wix", "Ghost", "Drupal"}
+
+
+def _detect_cms_signals(result) -> dict[str, int]:
+    """Which CMS signatures matched this already-fetched page, as {name:
+    weight}. Takes the strongest pattern's weight per name if more than one
+    of that CMS's patterns matched the same page, rather than summing them —
+    a single page shouldn't count twice toward the same CMS."""
+    html = result.html or ""
+    matches: dict[str, int] = {}
+    for name, patterns in _CMS_SIGNATURES.items():
+        weight = max((w for p, w in patterns if p.search(html)), default=0)
+        if weight:
+            matches[name] = weight
+    headers = getattr(result, "response_headers", None) or {}
+    link_header = headers.get("link", "") or headers.get("Link", "")
+    if _WORDPRESS_REST_LINK_RE.search(link_header):
+        matches["WordPress"] = max(matches.get("WordPress", 0), 2)
+    return matches
+
+
+def _resolve_detected_cms(cms_match_counts: dict[str, int]) -> str | None:
+    """A running sum of per-page weights (see _detect_cms_signals) — a
+    single strong-signal page (weight 2) already clears the bar, while
+    weak asset-path-only signals need to show up on a second page before
+    being trusted, since a lone substring hit could be coincidental."""
+    if not cms_match_counts:
+        return None
+    best_name, best_count = max(cms_match_counts.items(), key=lambda kv: kv[1])
+    return best_name if best_count >= 2 else None
+
+
 async def _build_estimate_result(job, url: str, filters: list[URLFilter]) -> dict:
     pages_fetched = len(job.pages)
     avg_words_per_page = job.total_words / pages_fetched if pages_fetched else 0
@@ -271,10 +351,21 @@ async def _build_estimate_result(job, url: str, filters: list[URLFilter]) -> dic
     # traversal may not have reached deep enough yet to discover everything
     # itself within the word budget.
     total_pages_estimate = max(sitemap_count or 0, discovered_total)
+    sitemap_found = sitemap_count is not None
+    detected_cms = _resolve_detected_cms(job.cms_match_counts)
+    if not sitemap_found:
+        confidence = "low"
+    elif detected_cms in _SITEMAP_CONVENTION_CMS:
+        confidence = "high"
+    else:
+        confidence = "medium"
     return {
         "pages_fetched": pages_fetched,
         "discovered_total": discovered_total,
         "sitemap_count": sitemap_count,
+        "sitemap_found": sitemap_found,
+        "detected_cms": detected_cms,
+        "confidence": confidence,
         "total_pages_estimate": total_pages_estimate,
         "avg_words_per_page": round(avg_words_per_page),
         "estimated_total_words": round(avg_words_per_page * total_pages_estimate),
@@ -504,6 +595,8 @@ async def run_crawl(
                     word_count = count_words(text)
                     page = PageResult(url=result.url, title=title, word_count=word_count, success=True)
                     job.total_words += word_count
+                    for name, weight in _detect_cms_signals(result).items():
+                        job.cms_match_counts[name] = job.cms_match_counts.get(name, 0) + weight
                 else:
                     raw_error = getattr(result, "error_message", None) or "Failed to fetch page"
                     # Crawl4AI runs its own layered anti-bot detection (Cloudflare/

@@ -44,6 +44,7 @@
       <summary>View all blocked/failed pages</summary>
       <ul id="page-issues-list" class="issues-list"></ul>
     </details>
+    <p class="note" id="try-different-page-note" style="display:none;">Nothing could be counted because the starting page itself couldn't be accessed. If you know another page on this site that might be more accessible (e.g. a blog post or inner page rather than the homepage), try starting the crawl from that URL instead.</p>
     <p class="error-box" id="error-box" style="display:none;"></p>
 
     <div class="action-row" id="action-row">
@@ -65,6 +66,10 @@
 
     <div class="estimate-panel" id="estimate-panel" style="display:none;">
       <div class="section-label">Estimate — before you crawl</div>
+      <div class="estimate-badges">
+        <span class="pill confidence-badge" id="estimate-confidence-badge"></span>
+        <span class="pill" id="estimate-cms-pill" style="display:none;"></span>
+      </div>
       <div class="estimate-stats">
         <div class="estimate-stat">
           <span class="muted">Pages fetched so far</span>

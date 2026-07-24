@@ -37,6 +37,10 @@ class Job:
     # crash happened before the specific login-blocked URLs were persisted,
     # just their count, so it's tracked separately from the live dict above.
     restored_login_blocked_count: int = 0
+    # Per-CMS weighted hit tally accumulated across pages (see crawler.py's
+    # _detect_cms_signals/_resolve_detected_cms) — not persisted across a
+    # crash/resume; low-stakes enough to just start over on that rare path.
+    cms_match_counts: dict[str, int] = field(default_factory=dict)
     # The asyncio.Task actually running run_crawl for this job, if it's in
     # this process (never persisted/serialized — purely a runtime handle).
     # crawl4ai's BFSDeepCrawlStrategy only checks its cooperative
