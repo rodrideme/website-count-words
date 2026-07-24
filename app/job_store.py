@@ -135,16 +135,20 @@ def remove_from_queue(job_id: str) -> bool:
     return False
 
 
-def restore_job(run) -> Job:
+def restore_job(run, estimate_result: dict | None = None) -> Job:
     """Reconstructs an in-memory Job from a checkpointed RunRecord (see
-    app.db.get_crawling_runs) so an interrupted crawl can resume from exactly
-    where it left off after a server restart."""
+    app.db.get_crawling_runs/get_paused_runs) — status follows the run's own
+    (either "crawling", for an interrupted crawl app.main's lifespan will
+    relaunch a task for, or "paused", for display/resume purposes only, no
+    task started). estimate_result lets a restored "paused" job's estimate
+    panel keep working across a restart, since it otherwise only ever lived
+    on the original in-memory Job (see app.crawler.estimate_result_from_snapshot)."""
     job = Job(
         id=run.id,
         source_url=run.source_url,
         user_id=run.user_id,
         max_pages=float("inf"),
-        status="crawling",
+        status=run.status,
         started_at=run.created_at,
         pages={p.url: p for p in run.pages},
         total_words=run.total_words,
@@ -154,6 +158,7 @@ def restore_job(run) -> Job:
         language_setting=None if run.language_auto_detected else run.language,
         resume_state=run.resume_state,
         restored_login_blocked_count=run.login_blocked_count,
+        estimate_result=estimate_result,
     )
     JOBS[job.id] = job
     return job

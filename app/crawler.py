@@ -400,6 +400,38 @@ async def _build_estimate_result(job, url: str, filters: list[URLFilter]) -> dic
     }
 
 
+def estimate_result_from_snapshot(snapshot: dict) -> dict | None:
+    """Rebuilds the same shape _build_estimate_result produces, from a saved
+    estimate_history row — used by app.main's lifespan to restore a paused
+    job's estimate display after a restart, since job.estimate_result
+    otherwise only ever lived on the original in-memory Job. avg_words_per_page
+    isn't itself a stored column, so it's back-derived from the two totals
+    that are. Returns None for a pre-timing-columns snapshot (an older row
+    from before those columns existed) rather than a dict full of Nones the
+    UI isn't prepared to render — same as if there were no snapshot at all."""
+    if snapshot.get("words_per_minute") is None or snapshot.get("estimated_duration_seconds") is None:
+        return None
+    total_pages_estimate = snapshot["estimated_total_pages"]
+    estimated_total_words = snapshot["estimated_total_words"]
+    avg_words_per_page = round(estimated_total_words / total_pages_estimate) if total_pages_estimate else 0
+    return {
+        "pages_fetched": snapshot["pages_fetched"],
+        "discovered_total": snapshot["discovered_total"],
+        "sitemap_count": snapshot["sitemap_count"],
+        "sitemap_found": bool(snapshot["sitemap_found"]),
+        "detected_cms": snapshot["detected_cms"],
+        "confidence": snapshot["confidence"],
+        "total_pages_estimate": total_pages_estimate,
+        "avg_words_per_page": avg_words_per_page,
+        "estimated_total_words": estimated_total_words,
+        "elapsed_seconds": snapshot["elapsed_seconds"],
+        "words_per_minute": snapshot["words_per_minute"],
+        "pages_per_minute": snapshot["pages_per_minute"],
+        "estimated_duration_seconds": snapshot["estimated_duration_seconds"],
+        "concurrent_crawls": snapshot["concurrent_crawls"],
+    }
+
+
 def _clean_error_message(message: str) -> str:
     """crawl4ai sometimes formats an internal exception with a full
     traceback-style dump attached (file paths, line numbers, a "Code

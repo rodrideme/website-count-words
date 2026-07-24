@@ -17,7 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app import auth, db
 from app.auth import require_admin, require_user, require_user_api
-from app.crawler import MAX_CONCURRENT_CRAWLS, PAUSE_AT_WORDS, run_crawl
+from app.crawler import MAX_CONCURRENT_CRAWLS, PAUSE_AT_WORDS, estimate_result_from_snapshot, run_crawl
 from app.job_store import create_job, enqueue, get_job, list_active_jobs, list_queued_jobs, restore_job
 from app.models import CrawlRequest, ShareEmailRequest, User
 from app.notifications import PUBLIC_BASE_URL, send_share_notification
@@ -41,6 +41,19 @@ async def lifespan(app: FastAPI):
         job.task = asyncio.create_task(
             run_crawl(job.id, job.source_url, job.max_pages, job.domain_scope, language, resume_state=job.resume_state)
         )
+
+    # A "paused" run is a legitimate stop, not a crash — but its in-memory
+    # Job (and estimate_result) is gone all the same, so without this the
+    # crawl page would fall back to the DB-only "past" view, which never
+    # shows the estimate panel or lets "Proceed with crawl" work again. No
+    # task is started here — just restoring enough state for the page and
+    # the existing /resume endpoint to work exactly as they did before the
+    # restart.
+    for run in await db.get_paused_runs():
+        snapshot = await db.get_estimate_snapshot(run.id)
+        estimate_result = estimate_result_from_snapshot(snapshot) if snapshot else None
+        restore_job(run, estimate_result=estimate_result)
+
     yield
     await db.close_db()
 

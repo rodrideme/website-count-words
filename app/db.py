@@ -276,6 +276,26 @@ async def get_crawling_runs() -> list[RunRecord]:
     return [_row_to_run(row) for row in rows]
 
 
+async def get_paused_runs() -> list[RunRecord]:
+    """Runs still marked "paused" at startup — JOBS is always empty on a
+    fresh process, so their in-memory Job (and its estimate_result) is gone
+    even though the pause itself is a legitimate, not-crashed state. Used to
+    rebuild each one back into JOBS (display-only, no task relaunched — see
+    app.main's lifespan) so the estimate panel and "Proceed with crawl" keep
+    working across a restart instead of quietly breaking."""
+    conn = _conn()
+    async with conn.execute("SELECT * FROM runs WHERE status = 'paused'") as cur:
+        rows = await cur.fetchall()
+    return [_row_to_run(row) for row in rows]
+
+
+async def get_estimate_snapshot(run_id: str) -> dict | None:
+    conn = _conn()
+    async with conn.execute("SELECT * FROM estimate_history WHERE run_id = ?", (run_id,)) as cur:
+        row = await cur.fetchone()
+    return dict(row) if row else None
+
+
 async def claim_crawling_run(run_id: str) -> bool:
     """Atomically claims an orphaned run for auto-resume, so if more than one
     process/instance races to resume the same run on startup, only one wins.
