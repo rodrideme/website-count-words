@@ -88,6 +88,14 @@ def get_job(job_id: str) -> Job | None:
     return JOBS.get(job_id)
 
 
+def list_active_jobs() -> list[Job]:
+    """Jobs actively doing work right now — "paused" is deliberately
+    excluded: it already exited normally with no live task to interrupt,
+    just idle in memory awaiting a Proceed/Adjust decision, a different
+    concern from "what's running and needs to be stopped"."""
+    return [j for j in JOBS.values() if j.status in ("starting", "crawling")]
+
+
 def restore_job(run) -> Job:
     """Reconstructs an in-memory Job from a checkpointed RunRecord (see
     app.db.get_crawling_runs) so an interrupted crawl can resume from exactly

@@ -18,7 +18,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app import auth, db
 from app.auth import require_admin, require_user, require_user_api
 from app.crawler import PAUSE_AT_WORDS, run_crawl
-from app.job_store import create_job, get_job, restore_job
+from app.job_store import create_job, get_job, list_active_jobs, restore_job
 from app.models import CrawlRequest, User
 from app.templates import templates
 
@@ -148,27 +148,34 @@ async def crawl_page(run_id: str, request: Request, user: User = Depends(require
     )
 
 
-@app.post("/crawl/{job_id}/cancel")
-async def cancel_crawl(job_id: str, user: User = Depends(require_user_api)):
-    # The crawl may actually be running in a different worker process than
-    # the one handling this request (JOBS isn't shared across processes) —
-    # set the in-memory flag if we happen to have it locally, but always
-    # also persist to the DB so whichever process is really running it picks
-    # this up on its next poll (see crawler.py's _should_cancel).
+async def _cancel_job(job_id: str) -> str:
+    """Cancels a job regardless of which process is actually running it
+    (JOBS isn't shared across processes) — sets the in-memory flag if we
+    happen to have it locally, but always also persists to the DB so
+    whichever process is really running it picks this up on its next poll
+    (see crawler.py's _should_cancel). Raises 404 only if the job is
+    entirely unknown, both here and in the DB; otherwise returns its
+    resulting status (a no-op "as-is" status for an already-terminal job)."""
     job = get_job(job_id)
     if job is not None:
         if job.status in _TERMINAL_STATUSES:
-            return JSONResponse({"status": job.status})
+            return job.status
         job.request_cancel()
     else:
         run = await db.get_run(job_id)
         if run is None:
             raise HTTPException(status_code=404, detail="Job not found")
         if run.status in _TERMINAL_STATUSES:
-            return JSONResponse({"status": run.status})
+            return run.status
 
     await db.request_cancel(job_id)
-    return JSONResponse({"status": "cancelling"})
+    return "cancelling"
+
+
+@app.post("/crawl/{job_id}/cancel")
+async def cancel_crawl(job_id: str, user: User = Depends(require_user_api)):
+    status = await _cancel_job(job_id)
+    return JSONResponse({"status": status})
 
 
 @app.get("/events/{job_id}")
@@ -253,3 +260,36 @@ async def admin_estimates(request: Request, admin: User = Depends(require_admin)
             "by_cms": _aggregate_estimate_errors(rows, "detected_cms"),
         },
     )
+
+
+@app.get("/admin/jobs")
+async def admin_jobs(request: Request, admin: User = Depends(require_admin)):
+    jobs = []
+    for job in list_active_jobs():
+        owner = await db.get_user(job.user_id)
+        jobs.append(
+            {
+                "id": job.id,
+                "source_url": job.source_url,
+                "status": job.status,
+                "owner_email": owner.email if owner else "(unknown)",
+                "started_at": job.started_at,
+                "page_count": len(job.pages),
+                "total_words": job.total_words,
+            }
+        )
+    return templates.TemplateResponse(request, "admin_jobs.html", {"jobs": jobs})
+
+
+@app.post("/admin/jobs/{job_id}/cancel")
+async def admin_cancel_job(job_id: str, admin: User = Depends(require_admin)):
+    status = await _cancel_job(job_id)
+    return JSONResponse({"status": status})
+
+
+@app.post("/admin/jobs/cancel-all")
+async def admin_cancel_all(admin: User = Depends(require_admin)):
+    cancelled = [job.id for job in list_active_jobs()]
+    for job_id in cancelled:
+        await _cancel_job(job_id)
+    return JSONResponse({"cancelled": cancelled})

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Server Jobs — Admin{% endblock %}
+{% block body %}
+  <div class="page-wrap">
+    <p class="subtitle">Everything actively crawling on this server right now, across every user. <a href="/admin/estimates">Estimate accuracy →</a></p>
+
+    <div class="action-row">
+      <button id="cancel-all-btn" class="danger-outline" {% if not jobs %}disabled{% endif %}>Cancel all ({{ jobs|length }})</button>
+    </div>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Site</th><th>Owner</th><th>Status</th><th>Started</th>
+            <th>Pages</th><th>Words</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="jobs-tbody">
+          {% for job in jobs %}
+          <tr data-job-id="{{ job.id }}">
+            <td class="url-cell">{{ job.source_url }}</td>
+            <td>{{ job.owner_email }}</td>
+            <td>{{ job.status }}</td>
+            <td>{{ job.started_at }}</td>
+            <td>{{ "{:,}".format(job.page_count) }}</td>
+            <td>{{ "{:,}".format(job.total_words) }}</td>
+            <td><button class="secondary cancel-job-btn" data-job-id="{{ job.id }}">Cancel</button></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="7" class="muted">Nothing is currently running.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    document.getElementById("cancel-all-btn").addEventListener("click", async () => {
+      if (!confirm("Cancel every active crawl on the server? This cannot be undone.")) return;
+      await fetch("/admin/jobs/cancel-all", { method: "POST" });
+      window.location.reload();
+    });
+
+    for (const btn of document.querySelectorAll(".cancel-job-btn")) {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        btn.textContent = "Cancelling…";
+        await fetch("/admin/jobs/" + btn.dataset.jobId + "/cancel", { method: "POST" });
+        window.location.reload();
+      });
+    }
+  </script>
+{% endblock %}
