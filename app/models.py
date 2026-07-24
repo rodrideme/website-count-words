@@ -37,6 +37,7 @@ class RunRecord(BaseModel):
     language: str | None = None
     language_auto_detected: bool = False
     resume_state: dict | None = None
+    is_public: bool = False
     pages: list[PageResult]
 
 
@@ -45,3 +46,7 @@ class CrawlRequest(BaseModel):
     domain_scope: Literal["all", "subdomain_only", "top_domain_only"] = "all"
     language: str | None = None
     force_recrawl: bool = False
+
+
+class ShareEmailRequest(BaseModel):
+    email: str

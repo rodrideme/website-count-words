@@ -72,7 +72,12 @@ async def init_db() -> None:
             estimated_total_words INTEGER NOT NULL,
             actual_total_pages INTEGER,
             actual_total_words INTEGER,
-            completed_at TEXT
+            completed_at TEXT,
+            elapsed_seconds INTEGER,
+            words_per_minute INTEGER,
+            pages_per_minute REAL,
+            estimated_duration_seconds INTEGER,
+            concurrent_crawls INTEGER
         );
         """
     )
@@ -104,6 +109,22 @@ async def _ensure_columns() -> None:
     if "cancel_requested" not in existing:
         await conn.execute("ALTER TABLE runs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0")
         await conn.commit()
+    if "is_public" not in existing:
+        await conn.execute("ALTER TABLE runs ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0")
+        await conn.commit()
+
+    cur = await conn.execute("PRAGMA table_info(estimate_history)")
+    existing_estimate_cols = {row["name"] for row in await cur.fetchall()}
+    for column, ddl in [
+        ("elapsed_seconds", "ALTER TABLE estimate_history ADD COLUMN elapsed_seconds INTEGER"),
+        ("words_per_minute", "ALTER TABLE estimate_history ADD COLUMN words_per_minute INTEGER"),
+        ("pages_per_minute", "ALTER TABLE estimate_history ADD COLUMN pages_per_minute REAL"),
+        ("estimated_duration_seconds", "ALTER TABLE estimate_history ADD COLUMN estimated_duration_seconds INTEGER"),
+        ("concurrent_crawls", "ALTER TABLE estimate_history ADD COLUMN concurrent_crawls INTEGER"),
+    ]:
+        if column not in existing_estimate_cols:
+            await conn.execute(ddl)
+            await conn.commit()
 
 
 async def close_db() -> None:
@@ -161,6 +182,7 @@ def _row_to_run(row: aiosqlite.Row) -> RunRecord:
         language=row["language"],
         language_auto_detected=bool(row["language_auto_detected"]),
         resume_state=json.loads(resume_state_json) if resume_state_json else None,
+        is_public=bool(row["is_public"]),
         pages=pages,
     )
 
@@ -180,6 +202,15 @@ async def get_run(run_id: str) -> RunRecord | None:
     async with conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)) as cur:
         row = await cur.fetchone()
     return _row_to_run(row) if row else None
+
+
+async def set_run_public(run_id: str, is_public: bool) -> bool:
+    """Returns False if the run has no saved row at all (e.g. still live and
+    never reached a terminal/paused state) — nothing to toggle yet."""
+    conn = _conn()
+    cur = await conn.execute("UPDATE runs SET is_public = ? WHERE id = ?", (int(is_public), run_id))
+    await conn.commit()
+    return cur.rowcount == 1
 
 
 async def save_run(
@@ -289,14 +320,18 @@ async def save_estimate_snapshot(run_id: str, source_url: str, estimate_result: 
         """
         INSERT INTO estimate_history
             (run_id, source_url, created_at, pages_fetched, discovered_total, sitemap_count,
-             sitemap_found, detected_cms, confidence, estimated_total_pages, estimated_total_words)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             sitemap_found, detected_cms, confidence, estimated_total_pages, estimated_total_words,
+             elapsed_seconds, words_per_minute, pages_per_minute, estimated_duration_seconds, concurrent_crawls)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             run_id, source_url, now,
             estimate_result["pages_fetched"], estimate_result["discovered_total"], estimate_result["sitemap_count"],
             int(estimate_result["sitemap_found"]), estimate_result["detected_cms"], estimate_result["confidence"],
             estimate_result["total_pages_estimate"], estimate_result["estimated_total_words"],
+            estimate_result["elapsed_seconds"], estimate_result["words_per_minute"],
+            estimate_result["pages_per_minute"], estimate_result["estimated_duration_seconds"],
+            estimate_result["concurrent_crawls"],
         ),
     )
     await conn.commit()

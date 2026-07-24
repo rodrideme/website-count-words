@@ -274,6 +274,7 @@ ul.recent-runs a.run-row:hover { background: #FCFBF8; text-decoration: none; }
 .status-cancelled { background: var(--neutral-bg); color: var(--neutral-text); }
 .status-failed { background: var(--danger-bg); color: var(--danger-text); }
 .status-paused { background: var(--brand-tint); color: var(--brand); }
+.status-queued { background: var(--neutral-bg); color: var(--neutral-text); }
 
 .pulse-dot {
   width: 7px; height: 7px; border-radius: 50%;
@@ -294,7 +295,45 @@ ul.recent-runs a.run-row:hover { background: #FCFBF8; text-decoration: none; }
   margin: 10px 0 6px;
   word-break: break-all;
 }
+.title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.title-row h1 { flex: 1; }
+.title-row #share-btn { flex-shrink: 0; margin-top: 10px; }
 #run-date { font-size: 13px; color: var(--muted); margin: 0; }
+
+#share-panel #share-link-row {
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+#share-link-input {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+}
+#share-email-form {
+  align-items: center;
+  gap: 8px;
+}
+#share-email-form label { font-size: 13px; color: var(--muted); }
+#share-email-input {
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+}
+#share-email-status { margin-top: 8px; }
 
 .settings-applied {
   display: flex;
@@ -458,6 +497,13 @@ ul.issues-list .issue-reason {
 .confidence-badge.confidence-high { background: var(--success-bg); color: var(--success-text); border-color: transparent; }
 .confidence-badge.confidence-medium { background: var(--warn-bg); color: var(--warn-text); border-color: transparent; }
 .confidence-badge.confidence-low { background: var(--neutral-bg); color: var(--neutral-text); border-color: transparent; }
+.estimate-duration {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 10px;
+}
+.estimate-duration .big { font-family: var(--font-mono); font-size: 30px; font-weight: 700; }
 .estimate-stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

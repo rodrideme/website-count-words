@@ -5,7 +5,7 @@
     <p class="subtitle">Everything actively crawling on this server right now, across every user. <a href="/admin/estimates">Estimate accuracy →</a></p>
 
     <div class="action-row">
-      <button id="cancel-all-btn" class="danger-outline" {% if not jobs %}disabled{% endif %}>Cancel all ({{ jobs|length }})</button>
+      <button id="cancel-all-btn" class="danger-outline" {% if not jobs and not queued_jobs %}disabled{% endif %}>Cancel all ({{ (jobs|length) + (queued_jobs|length) }})</button>
     </div>
 
     <div class="table-scroll">
@@ -29,6 +29,27 @@
           </tr>
           {% else %}
           <tr><td colspan="7" class="muted">Nothing is currently running.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section-label" style="margin-top:32px;">Queued ({{ queued_jobs|length }})</div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Site</th><th>Owner</th><th>Position</th><th></th></tr>
+        </thead>
+        <tbody>
+          {% for job in queued_jobs %}
+          <tr data-job-id="{{ job.id }}">
+            <td class="url-cell">{{ job.source_url }}</td>
+            <td>{{ job.owner_email }}</td>
+            <td>#{{ loop.index }}</td>
+            <td><button class="secondary cancel-job-btn" data-job-id="{{ job.id }}">Cancel</button></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="4" class="muted">Nothing waiting.</td></tr>
           {% endfor %}
         </tbody>
       </table>

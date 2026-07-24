@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import time
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import psutil
@@ -21,7 +22,7 @@ from crawl4ai.deep_crawling.filters import DomainFilter, FilterChain, URLFilter
 from crawl4ai.utils import get_base_domain
 
 from app import db
-from app.job_store import get_job
+from app.job_store import dequeue_next, get_job, list_active_jobs
 from app.models import PageResult
 from app.notifications import send_crawl_notification
 from app.word_count import count_words
@@ -209,6 +210,7 @@ def _detect_page_language(html: str | None) -> str | None:
 
 
 PAUSE_AT_WORDS = 50_000
+MAX_CONCURRENT_CRAWLS = 3
 _CHECKPOINT_EVERY = 20
 
 _process = psutil.Process()
@@ -359,6 +361,21 @@ async def _build_estimate_result(job, url: str, filters: list[URLFilter]) -> dic
         confidence = "high"
     else:
         confidence = "medium"
+
+    started_at = datetime.fromisoformat(job.started_at)
+    elapsed_seconds = max((datetime.now(timezone.utc) - started_at).total_seconds(), 0.01)
+    elapsed_minutes = elapsed_seconds / 60
+    words_per_minute = job.total_words / elapsed_minutes
+    pages_per_minute = pages_fetched / elapsed_minutes
+    estimated_duration_seconds = (
+        elapsed_seconds * (total_pages_estimate / pages_fetched) if pages_fetched else elapsed_seconds
+    )
+    # +1 for this job itself — by this point job.status has already flipped
+    # to "paused" (set by the caller just before this runs), so it's no
+    # longer in list_active_jobs()'s "starting"/"crawling" set, even though
+    # it was actively occupying a slot for basically this entire run.
+    concurrent_crawls = len(list_active_jobs()) + 1
+
     return {
         "pages_fetched": pages_fetched,
         "discovered_total": discovered_total,
@@ -369,6 +386,11 @@ async def _build_estimate_result(job, url: str, filters: list[URLFilter]) -> dic
         "total_pages_estimate": total_pages_estimate,
         "avg_words_per_page": round(avg_words_per_page),
         "estimated_total_words": round(avg_words_per_page * total_pages_estimate),
+        "elapsed_seconds": round(elapsed_seconds),
+        "words_per_minute": round(words_per_minute),
+        "pages_per_minute": round(pages_per_minute, 1),
+        "estimated_duration_seconds": round(estimated_duration_seconds),
+        "concurrent_crawls": concurrent_crawls,
     }
 
 
@@ -433,6 +455,26 @@ async def _resolve_terminal_status(job, pause_at_words: int | None, url: str, fi
         await db.save_estimate_snapshot(job.id, job.source_url, job.estimate_result)
     else:
         job.status = "completed"
+
+
+async def _maybe_start_next_queued() -> None:
+    """Called whenever a crawl finishes (however it ended) — if there's
+    room and something waiting, starts the next queued job the exact same
+    way a fresh POST /crawl would. The one hook point that covers every way
+    a slot can free up (completed, failed, cancelled, or paused)."""
+    if len(list_active_jobs()) >= MAX_CONCURRENT_CRAWLS:
+        return
+    next_id = dequeue_next()
+    if next_id is None:
+        return
+    job = get_job(next_id)
+    if job is None:
+        return
+    language = job.language_setting or job.detected_language
+    job.status = "starting"
+    job.task = asyncio.create_task(
+        run_crawl(job.id, job.source_url, job.max_pages, job.domain_scope, language, pause_at_words=PAUSE_AT_WORDS)
+    )
 
 
 async def run_crawl(
@@ -738,4 +780,11 @@ async def run_crawl(
                     page_count=len(job.pages),
                     run_id=job.id,
                     error=job.error or job.stopped_reason,
+                    detected_cms=(job.estimate_result or {}).get("detected_cms"),
+                    confidence=(job.estimate_result or {}).get("confidence"),
                 )
+
+        # This job just freed a slot (or, if paused, was already outside
+        # list_active_jobs()'s "starting"/"crawling" set) — see if anything
+        # is waiting for it.
+        await _maybe_start_next_queued()

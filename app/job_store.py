@@ -8,6 +8,10 @@ from datetime import datetime, timezone
 from app.models import PageResult
 
 JOBS: dict[str, "Job"] = {}
+# FIFO job ids waiting for a free slot (see crawler.py's MAX_CONCURRENT_CRAWLS
+# and _maybe_start_next_queued) — not persisted; a restart loses the wait
+# list, same acceptable tradeoff as other in-memory-only state in this app.
+QUEUE: list[str] = []
 
 
 @dataclass
@@ -16,7 +20,7 @@ class Job:
     source_url: str
     user_id: int
     max_pages: int
-    status: str = "starting"  # starting | crawling | completed | failed | cancelled | paused
+    status: str = "starting"  # starting | queued | crawling | completed | failed | cancelled | paused
     started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     pages: dict[str, PageResult] = field(default_factory=dict)
     login_blocked: dict[str, PageResult] = field(default_factory=dict)
@@ -50,6 +54,13 @@ class Job:
     task: asyncio.Task | None = None
 
     def request_cancel(self) -> None:
+        # A queued job has no task at all yet — just pull it out of the
+        # queue and resolve it directly, rather than the running-crawl path
+        # below.
+        if self.status == "queued":
+            remove_from_queue(self.id)
+            self.status = "cancelled"
+            return
         # Still set for should_cancel to see (covers the narrow window before
         # a page's first checkpoint, or if .task somehow isn't set) — but
         # .task.cancel() below is what actually makes this prompt.
@@ -75,6 +86,7 @@ class Job:
             "language_setting": self.language_setting,
             "estimate_result": self.estimate_result,
             "stopped_reason": self.stopped_reason,
+            "queue_position": (QUEUE.index(self.id) + 1) if self.id in QUEUE else None,
         }
 
 
@@ -94,6 +106,28 @@ def list_active_jobs() -> list[Job]:
     just idle in memory awaiting a Proceed/Adjust decision, a different
     concern from "what's running and needs to be stopped"."""
     return [j for j in JOBS.values() if j.status in ("starting", "crawling")]
+
+
+def list_queued_jobs() -> list[Job]:
+    return [JOBS[job_id] for job_id in QUEUE if job_id in JOBS]
+
+
+def enqueue(job_id: str) -> int:
+    """Adds a job to the back of the wait list, returning its 1-based
+    position."""
+    QUEUE.append(job_id)
+    return len(QUEUE)
+
+
+def dequeue_next() -> str | None:
+    return QUEUE.pop(0) if QUEUE else None
+
+
+def remove_from_queue(job_id: str) -> bool:
+    if job_id in QUEUE:
+        QUEUE.remove(job_id)
+        return True
+    return False
 
 
 def restore_job(run) -> Job:

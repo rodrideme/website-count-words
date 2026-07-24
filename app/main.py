@@ -17,9 +17,10 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app import auth, db
 from app.auth import require_admin, require_user, require_user_api
-from app.crawler import PAUSE_AT_WORDS, run_crawl
-from app.job_store import create_job, get_job, list_active_jobs, restore_job
-from app.models import CrawlRequest, User
+from app.crawler import MAX_CONCURRENT_CRAWLS, PAUSE_AT_WORDS, run_crawl
+from app.job_store import create_job, enqueue, get_job, list_active_jobs, list_queued_jobs, restore_job
+from app.models import CrawlRequest, ShareEmailRequest, User
+from app.notifications import PUBLIC_BASE_URL, send_share_notification
 from app.templates import templates
 
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled", "paused")
@@ -93,7 +94,24 @@ async def start_crawl(payload: CrawlRequest, user: User = Depends(require_user_a
         if cached is not None:
             return JSONResponse({"cached": True, "run_id": cached.id})
 
+    # Checked before create_job() below adds itself to JOBS — otherwise the
+    # new job would always count toward its own admission check, queueing
+    # every request one slot too early (e.g. the 3rd of 3 allowed slots).
+    at_capacity = len(list_active_jobs()) >= MAX_CONCURRENT_CRAWLS
+
     job = create_job(source_url=source_url, user_id=user.id, max_pages=max_pages)
+    # Set now (rather than waiting for run_crawl's own copy of this, which
+    # only runs once actually started) so a queued job shows correct
+    # settings immediately, and _maybe_start_next_queued has the right
+    # values to launch with later.
+    job.domain_scope = payload.domain_scope
+    job.language_setting = payload.language
+
+    if at_capacity:
+        job.status = "queued"
+        position = enqueue(job.id)
+        return JSONResponse({"cached": False, "run_id": job.id, "queued": True, "position": position})
+
     job.task = asyncio.create_task(
         run_crawl(job.id, source_url, max_pages, payload.domain_scope, payload.language, pause_at_words=PAUSE_AT_WORDS)
     )
@@ -129,6 +147,7 @@ async def crawl_page(run_id: str, request: Request, user: User = Depends(require
                 "source_url": job.source_url,
                 "started_at": job.started_at,
                 "initial_status_payload": job.status_payload(),
+                "user": user,
             },
         )
 
@@ -145,8 +164,56 @@ async def crawl_page(run_id: str, request: Request, user: User = Depends(require
             "source_url": run.source_url,
             "run": run,
             "initial_pages": [p.model_dump() for p in run.pages],
+            "user": user,
         },
     )
+
+
+@app.get("/share/{run_id}")
+async def shared_crawl_page(run_id: str, request: Request):
+    run = await db.get_run(run_id)
+    if run is None or not run.is_public:
+        raise HTTPException(status_code=404, detail="Crawl not found")
+
+    return templates.TemplateResponse(
+        request,
+        "crawl.html",
+        {
+            "mode": "shared",
+            "run_id": run_id,
+            "source_url": run.source_url,
+            "run": run,
+            "initial_pages": [p.model_dump() for p in run.pages],
+            "user": None,
+        },
+    )
+
+
+def _share_url(run_id: str) -> str:
+    return f"{PUBLIC_BASE_URL}/share/{run_id}" if PUBLIC_BASE_URL else f"/share/{run_id}"
+
+
+@app.post("/crawl/{run_id}/share")
+async def toggle_share(run_id: str, user: User = Depends(require_user_api)):
+    run = await db.get_run(run_id)
+    if run is None or run.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    new_state = not run.is_public
+    await db.set_run_public(run_id, new_state)
+    return JSONResponse({"is_public": new_state, "share_url": _share_url(run_id)})
+
+
+@app.post("/crawl/{run_id}/share/email")
+async def email_share(run_id: str, payload: ShareEmailRequest, user: User = Depends(require_user_api)):
+    run = await db.get_run(run_id)
+    if run is None or run.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if not run.is_public:
+        raise HTTPException(status_code=400, detail="Make this run public before sharing it by email")
+
+    await send_share_notification(payload.email.strip(), user.email, run.source_url, _share_url(run_id))
+    return JSONResponse({"sent": True})
 
 
 async def _cancel_job(job_id: str) -> str:
@@ -245,6 +312,19 @@ def _aggregate_estimate_errors(rows: list[dict], group_key: str) -> dict[str, di
     }
 
 
+def _aggregate_speed_by_concurrency(rows: list[dict]) -> dict[str, dict]:
+    groups: dict[str, list[float]] = {}
+    for row in rows:
+        if row["words_per_minute"] is None or row["concurrent_crawls"] is None:
+            continue
+        key = str(row["concurrent_crawls"])
+        groups.setdefault(key, []).append(row["words_per_minute"])
+    return {
+        key: {"count": len(speeds), "avg_words_per_minute": round(sum(speeds) / len(speeds))}
+        for key, speeds in sorted(groups.items())
+    }
+
+
 @app.get("/admin/estimates")
 async def admin_estimates(request: Request, admin: User = Depends(require_admin)):
     rows = await db.list_estimate_history()
@@ -259,27 +339,29 @@ async def admin_estimates(request: Request, admin: User = Depends(require_admin)
             "rows": rows,
             "by_confidence": _aggregate_estimate_errors(rows, "confidence"),
             "by_cms": _aggregate_estimate_errors(rows, "detected_cms"),
+            "by_concurrency": _aggregate_speed_by_concurrency(rows),
         },
     )
 
 
+async def _job_summary(job) -> dict:
+    owner = await db.get_user(job.user_id)
+    return {
+        "id": job.id,
+        "source_url": job.source_url,
+        "status": job.status,
+        "owner_email": owner.email if owner else "(unknown)",
+        "started_at": job.started_at,
+        "page_count": len(job.pages),
+        "total_words": job.total_words,
+    }
+
+
 @app.get("/admin/jobs")
 async def admin_jobs(request: Request, admin: User = Depends(require_admin)):
-    jobs = []
-    for job in list_active_jobs():
-        owner = await db.get_user(job.user_id)
-        jobs.append(
-            {
-                "id": job.id,
-                "source_url": job.source_url,
-                "status": job.status,
-                "owner_email": owner.email if owner else "(unknown)",
-                "started_at": job.started_at,
-                "page_count": len(job.pages),
-                "total_words": job.total_words,
-            }
-        )
-    return templates.TemplateResponse(request, "admin_jobs.html", {"jobs": jobs})
+    jobs = [await _job_summary(job) for job in list_active_jobs()]
+    queued_jobs = [await _job_summary(job) for job in list_queued_jobs()]
+    return templates.TemplateResponse(request, "admin_jobs.html", {"jobs": jobs, "queued_jobs": queued_jobs})
 
 
 @app.post("/admin/jobs/{job_id}/cancel")
@@ -290,7 +372,7 @@ async def admin_cancel_job(job_id: str, admin: User = Depends(require_admin)):
 
 @app.post("/admin/jobs/cancel-all")
 async def admin_cancel_all(admin: User = Depends(require_admin)):
-    cancelled = [job.id for job in list_active_jobs()]
+    cancelled = [job.id for job in list_active_jobs() + list_queued_jobs()]
     for job_id in cancelled:
         await _cancel_job(job_id)
     return JSONResponse({"cancelled": cancelled})

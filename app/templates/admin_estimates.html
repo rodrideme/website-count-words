@@ -42,6 +42,24 @@
       </tbody>
     </table>
 
+    <div class="section-label">By concurrency level</div>
+    <table class="folder-table" style="margin-bottom:32px;">
+      <thead>
+        <tr><th>Concurrent crawls</th><th>Samples</th><th>Avg words/min</th></tr>
+      </thead>
+      <tbody>
+        {% for key, stats in by_concurrency.items() %}
+        <tr>
+          <td>{{ key }}</td>
+          <td>{{ stats.count }}</td>
+          <td>{{ "{:,}".format(stats.avg_words_per_minute) }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="muted">No timing data recorded yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
     <div class="section-label">All estimates</div>
     <div class="table-scroll">
       <table>
@@ -50,6 +68,7 @@
             <th>Site</th><th>Confidence</th><th>CMS</th><th>Sitemap</th>
             <th>Est. words</th><th>Actual words</th><th>Word error</th>
             <th>Est. pages</th><th>Actual pages</th><th>Page error</th>
+            <th>Concurrency</th><th>Words/min</th><th>Pages/min</th><th>Est. duration</th>
           </tr>
         </thead>
         <tbody>
@@ -65,9 +84,13 @@
             <td>{{ "{:,}".format(row.estimated_total_pages) }}</td>
             <td>{{ "{:,}".format(row.actual_total_pages) if row.actual_total_pages is not none else "pending" }}</td>
             <td>{{ "%+.1f"|format(row.page_error_pct) + "%" if row.page_error_pct is not none else "—" }}</td>
+            <td>{{ row.concurrent_crawls if row.concurrent_crawls is not none else "—" }}</td>
+            <td>{{ "{:,}".format(row.words_per_minute) if row.words_per_minute is not none else "—" }}</td>
+            <td>{{ row.pages_per_minute if row.pages_per_minute is not none else "—" }}</td>
+            <td>{{ (row.estimated_duration_seconds // 60) ~ " min" if row.estimated_duration_seconds is not none else "—" }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="10" class="muted">No estimates recorded yet.</td></tr>
+          <tr><td colspan="14" class="muted">No estimates recorded yet.</td></tr>
           {% endfor %}
         </tbody>
       </table>

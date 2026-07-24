@@ -3,7 +3,12 @@
 {% block body %}
   <div class="report-wrap report-header">
     <a href="/">← New crawl</a>
-    <h1>{{ source_url }}</h1>
+    <div class="title-row">
+      <h1>{{ source_url }}</h1>
+      {% if mode != "shared" %}
+      <button type="button" id="share-btn" class="secondary">Share results</button>
+      {% endif %}
+    </div>
     <p id="run-date"></p>
     <p id="detected-language-note" class="muted" style="display:none;"></p>
     <div class="settings-applied">
@@ -11,6 +16,24 @@
       <span class="pill" id="domain-scope-pill"></span>
       <span class="pill" id="language-pill"></span>
     </div>
+    <p class="muted" id="email-notice" style="display:none;">We'll email <strong>{{ user.email }}</strong> a summary when this finishes.</p>
+
+    {% if mode != "shared" %}
+    <div id="share-panel" class="estimate-panel" style="display:none;">
+      <span class="section-label">Share results</span>
+      <p class="muted" id="share-status-text"></p>
+      <div id="share-link-row" style="display:none;">
+        <input type="text" id="share-link-input" readonly>
+        <button type="button" id="share-copy-btn" class="secondary">Copy link</button>
+      </div>
+      <form id="share-email-form" style="display:none;">
+        <label for="share-email-input">Send to:</label>
+        <input type="email" id="share-email-input" placeholder="friend@example.com" required>
+        <button type="submit" class="secondary">Send</button>
+      </form>
+      <p class="muted" id="share-email-status"></p>
+    </div>
+    {% endif %}
   </div>
 
   <div class="totals-bar report-wrap">
@@ -65,11 +88,22 @@
       </form>
     </div>
 
+    <div class="estimate-panel" id="queued-panel" style="display:none;">
+      <div class="section-label">Queued</div>
+      <p class="muted" id="queued-message"></p>
+    </div>
+
     <div class="estimate-panel" id="estimate-panel" style="display:none;">
       <div class="section-label">Estimate — before you crawl</div>
       <div class="estimate-badges">
         <span class="pill confidence-badge" id="estimate-confidence-badge"></span>
         <span class="pill" id="estimate-cms-pill" style="display:none;"></span>
+        <span class="pill" id="estimate-concurrency-pill"></span>
+      </div>
+      <div class="estimate-duration">
+        <span class="muted">Estimated total time</span>
+        <div class="big" id="estimate-duration">—</div>
+        <span class="muted" id="estimate-speed"></span>
       </div>
       <div class="estimate-stats">
         <div class="estimate-stat">
@@ -155,6 +189,7 @@
       domainScope: {{ run.domain_scope | tojson }},
       languageSetting: {{ run.language | tojson }},
       languageAutoDetected: {{ run.language_auto_detected | tojson }},
+      initialIsPublic: {{ run.is_public | tojson }},
       {% endif %}
     });
   </script>

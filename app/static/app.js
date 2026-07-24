@@ -71,6 +71,7 @@ function badgeClass(status) {
   if (status === "failed") return "status-badge status-failed";
   if (status === "cancelled") return "status-badge status-cancelled";
   if (status === "paused") return "status-badge status-paused";
+  if (status === "queued") return "status-badge status-queued";
   return "status-badge status-crawling";
 }
 
@@ -116,6 +117,22 @@ function formatDate(iso) {
   const datePart = d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
   const timePart = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   return `${datePart} · ${timePart}`;
+}
+
+function formatDuration(totalSeconds) {
+  if (!totalSeconds || totalSeconds < 1) return "less than a minute";
+  const totalMinutes = Math.round(totalSeconds / 60);
+  if (totalMinutes < 1) return "less than a minute";
+  if (totalMinutes < 60) return `~${totalMinutes} min`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes ? `~${hours}h ${minutes}m` : `~${hours}h`;
+}
+
+function concurrencyLabel(count) {
+  if (count <= 1) return "Easy";
+  if (count === 2) return "Moderate";
+  return "Busy";
 }
 
 function renderPageRow(tbody, page) {
@@ -395,8 +412,24 @@ function initCrawlPage(opts) {
   const estimateMessageEl = document.getElementById("estimate-message");
   const estimateConfidenceBadge = document.getElementById("estimate-confidence-badge");
   const estimateCmsPill = document.getElementById("estimate-cms-pill");
+  const estimateConcurrencyPill = document.getElementById("estimate-concurrency-pill");
+  const estimateDurationEl = document.getElementById("estimate-duration");
+  const estimateSpeedEl = document.getElementById("estimate-speed");
+  const queuedPanel = document.getElementById("queued-panel");
+  const queuedMessageEl = document.getElementById("queued-message");
+  const emailNotice = document.getElementById("email-notice");
   const proceedBtn = document.getElementById("proceed-btn");
   const adjustBtn = document.getElementById("adjust-btn");
+
+  const shareBtn = document.getElementById("share-btn");
+  const sharePanel = document.getElementById("share-panel");
+  const shareStatusText = document.getElementById("share-status-text");
+  const shareLinkRow = document.getElementById("share-link-row");
+  const shareLinkInput = document.getElementById("share-link-input");
+  const shareCopyBtn = document.getElementById("share-copy-btn");
+  const shareEmailForm = document.getElementById("share-email-form");
+  const shareEmailInput = document.getElementById("share-email-input");
+  const shareEmailStatus = document.getElementById("share-email-status");
 
   const pageIssuesNote = document.getElementById("page-issues-note");
   const pageIssuesDetails = document.getElementById("page-issues-details");
@@ -429,18 +462,21 @@ function initCrawlPage(opts) {
     const otherFailed = pages.filter((p) => !p.success && !p.blocked_by_host);
     setStatCount(blockedHostEl, blocked.length);
 
+    // Deliberately no quoted error text here — some of those messages are
+    // raw crawl4ai/Playwright internals (file paths, line numbers) that
+    // are meaningless to a user. Full detail per page is one click away
+    // in "View all blocked/failed pages" below, where technical text is
+    // fine since it's clearly a diagnostic list, not the headline summary.
     const lines = [];
     if (blocked.length) {
-      const sample = blocked[0].error || "the site's own bot detection";
       lines.push(blocked.length === 1
-        ? `1 page was blocked by this site's own bot detection — it replied: "${sample}"`
-        : `${blocked.length.toLocaleString("en-US")} pages were blocked by this site's own bot detection — e.g.: "${sample}"`);
+        ? "1 page was blocked by this site's own bot detection."
+        : `${blocked.length.toLocaleString("en-US")} pages were blocked by this site's own bot detection.`);
     }
     if (otherFailed.length) {
-      const sample = otherFailed[0].error || "an unknown error";
       lines.push(otherFailed.length === 1
-        ? `1 page failed to load: "${sample}"`
-        : `${otherFailed.length.toLocaleString("en-US")} pages failed to load — e.g.: "${sample}"`);
+        ? "1 page failed to load."
+        : `${otherFailed.length.toLocaleString("en-US")} pages failed to load.`);
     }
 
     if (!lines.length) {
@@ -505,6 +541,12 @@ function initCrawlPage(opts) {
       ? `Found a sitemap — this site has approximately ${pagesText} pages. Crawling all of them may take a while.`
       : `No sitemap found — this estimate is based only on pages discovered so far (approximately ${pagesText}), so it may be less accurate. Crawling all of them may take a while.`;
 
+    estimateDurationEl.textContent = formatDuration(result.estimated_duration_seconds);
+    estimateSpeedEl.textContent =
+      `${result.words_per_minute.toLocaleString("en-US")} words/min` +
+      ` · ${result.pages_per_minute.toLocaleString("en-US")} pages/min`;
+    estimateConcurrencyPill.textContent = concurrencyLabel(result.concurrent_crawls) + " server load";
+
     actionRow.style.display = "none";
     estimatePanel.style.display = "block";
   };
@@ -567,7 +609,73 @@ function initCrawlPage(opts) {
     window.location.href = "/crawl/" + data.run_id;
   });
 
-  if (opts.mode === "past") {
+  if (shareBtn) {
+    const shareUrl = window.location.origin + "/share/" + opts.runId;
+
+    const renderShareUI = (isPublic) => {
+      shareBtn.textContent = isPublic ? "Stop sharing" : "Share results";
+      if (isPublic) {
+        shareStatusText.textContent = "This report is public — anyone with the link can view it.";
+        shareLinkInput.value = shareUrl;
+        shareLinkRow.style.display = "flex";
+        shareEmailForm.style.display = "flex";
+        sharePanel.style.display = "block";
+      } else {
+        shareStatusText.textContent = "This report is private.";
+        shareLinkRow.style.display = "none";
+        shareEmailForm.style.display = "none";
+        sharePanel.style.display = "none";
+      }
+      shareEmailStatus.textContent = "";
+    };
+
+    shareBtn.addEventListener("click", async () => {
+      shareBtn.disabled = true;
+      try {
+        const res = await fetch("/crawl/" + opts.runId + "/share", { method: "POST" });
+        const data = await res.json();
+        renderShareUI(data.is_public);
+      } finally {
+        shareBtn.disabled = false;
+      }
+    });
+
+    shareCopyBtn.addEventListener("click", async () => {
+      shareLinkInput.select();
+      await navigator.clipboard.writeText(shareLinkInput.value);
+      shareCopyBtn.textContent = "Copied!";
+      setTimeout(() => { shareCopyBtn.textContent = "Copy link"; }, 1500);
+    });
+
+    shareEmailForm.addEventListener("submit", async (evt) => {
+      evt.preventDefault();
+      const sendBtn = shareEmailForm.querySelector("button");
+      sendBtn.disabled = true;
+      shareEmailStatus.textContent = "Sending…";
+      try {
+        const res = await fetch("/crawl/" + opts.runId + "/share/email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: shareEmailInput.value.trim() }),
+        });
+        shareEmailStatus.textContent = res.ok ? "Sent!" : "Couldn't send — try again.";
+        if (res.ok) shareEmailInput.value = "";
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+
+    if (opts.mode === "live") {
+      shareBtn.disabled = true;
+    } else {
+      renderShareUI(!!opts.initialIsPublic);
+    }
+  }
+
+  if (opts.mode === "past" || opts.mode === "shared") {
+    if (opts.mode === "shared") {
+      actionRow.style.display = "none";
+    }
     runDateEl.textContent = "Run: " + formatDate(opts.createdAt);
     setStatus(opts.initialStatus);
     totalWordsEl.textContent = opts.initialTotalWords.toLocaleString("en-US");
@@ -610,12 +718,24 @@ function initCrawlPage(opts) {
     }
     if (TERMINAL_STATUSES.includes(data.status)) {
       cancelBtn.style.display = "none";
+      emailNotice.style.display = "none";
+      queuedPanel.style.display = "none";
+      if (shareBtn) shareBtn.disabled = false;
       showTryDifferentPageNote(data.total_words, data.page_count);
       if (data.status === "paused") {
         showEstimatePanel(data.estimate_result);
       }
     } else {
       cancelBtn.style.display = "";
+      emailNotice.style.display = "block";
+      if (data.status === "queued") {
+        queuedMessageEl.textContent = data.queue_position
+          ? `You're #${data.queue_position} in line — this server is busy right now. This will start automatically, and we'll email you when it's done.`
+          : "This will start automatically, and we'll email you when it's done.";
+        queuedPanel.style.display = "block";
+      } else {
+        queuedPanel.style.display = "none";
+      }
     }
   };
 
