@@ -407,6 +407,34 @@ def _is_login_wall(result) -> bool:
     return False
 
 
+async def _resolve_terminal_status(job, pause_at_words: int | None, url: str, filters: list[URLFilter]) -> None:
+    """Figures out *why* the crawl loop stopped and sets job.status (and any
+    accompanying fields) accordingly. Shared between the normal
+    loop-exhausted-naturally path and the CancelledError handler in
+    run_crawl, since a direct self-cancel (see the main loop) can now reach
+    this for the memory/pause cases too, not just a natural level-boundary
+    stop."""
+    if job.cancel_requested:
+        job.status = "cancelled"
+    elif _memory_exceeded():
+        job.status = "cancelled"
+        job.stopped_reason = (
+            "This crawl was stopped automatically — it was using too much "
+            "memory to continue safely on this server."
+        )
+    elif pause_at_words is not None and job.total_words >= pause_at_words:
+        # Hit the pause threshold with the frontier still non-empty — this
+        # is a genuine pause, not a finish. If the site instead exhausted
+        # its own links before ever reaching the threshold, this branch is
+        # skipped entirely and it's just a normal completion, exact rather
+        # than estimated.
+        job.status = "paused"
+        job.estimate_result = await _build_estimate_result(job, url, filters)
+        await db.save_estimate_snapshot(job.id, job.source_url, job.estimate_result)
+    else:
+        job.status = "completed"
+
+
 async def run_crawl(
     job_id: str,
     url: str,
@@ -549,6 +577,13 @@ async def run_crawl(
                 deep_crawl_strategy=strategy,
                 stream=True,
                 semaphore_count=2,
+                # crawl4ai's default (60s) means a single stuck page can hold
+                # up cancellation/pause for that long, since crawl4ai's own
+                # cleanup has to wait for an in-flight fetch to finish or
+                # error out either way. 30s still comfortably covers
+                # legitimately slow pages seen in practice (up to ~26s), while
+                # roughly halving that worst-case wait.
+                page_timeout=30000,
                 markdown_generator=DefaultMarkdownGenerator(content_filter=PruningContentFilter()),
                 excluded_tags=["nav", "footer", "aside", "form"],
                 word_count_threshold=10,
@@ -626,34 +661,37 @@ async def run_crawl(
                 if len(job.pages) % _CHECKPOINT_EVERY == 0:
                     await _checkpoint(job, languages)
 
+                # Don't wait for crawl4ai's own should_cancel to notice —
+                # BFSDeepCrawlStrategy only checks that between whole BFS
+                # levels, which can badly overshoot the word-count pause (or
+                # the memory ceiling) if the current level has several slow
+                # pages left in it. Cancelling the task directly, right after
+                # each result, interrupts sooner than waiting for the rest of
+                # the level to drain — though on a genuinely slow/stuck page
+                # it can still take up to page_timeout to actually resolve,
+                # since that's how long crawl4ai's own cleanup waits for the
+                # in-flight fetch to finish or error out. Accepted tradeoff:
+                # see page_timeout below for the cheap bound on that case.
+                if (
+                    job.task is not None
+                    and not job.task.done()
+                    and (
+                        job.cancel_requested
+                        or _memory_exceeded()
+                        or (pause_at_words is not None and job.total_words >= pause_at_words)
+                    )
+                ):
+                    job.task.cancel()
+
         job.limit_reached = len(job.pages) + len(job.login_blocked) >= max_pages
-        if job.cancel_requested:
-            job.status = "cancelled"
-        elif _memory_exceeded():
-            job.status = "cancelled"
-            job.stopped_reason = (
-                "This crawl was stopped automatically — it was using too much "
-                "memory to continue safely on this server."
-            )
-        elif pause_at_words is not None and job.total_words >= pause_at_words:
-            # Hit the pause threshold with the frontier still non-empty —
-            # this is a genuine pause, not a finish. If the site instead
-            # exhausted its own links before ever reaching the threshold,
-            # this branch is skipped entirely and it's just a normal
-            # completion below, exact rather than estimated.
-            job.status = "paused"
-            job.estimate_result = await _build_estimate_result(job, url, filters)
-            await db.save_estimate_snapshot(job.id, job.source_url, job.estimate_result)
-        else:
-            job.status = "completed"
+        await _resolve_terminal_status(job, pause_at_words, url, filters)
     except asyncio.CancelledError:
-        # A direct task.cancel() (see Job.request_cancel) interrupts execution
-        # immediately, at whatever await point it's currently at — unlike
-        # crawl4ai's own should_cancel, which BFSDeepCrawlStrategy only
-        # checks between BFS levels, which can take a long time to come back
-        # around on a site with several slow pages in the same level.
-        job.status = "cancelled"
+        # Reached either via Job.request_cancel() (user clicked Cancel) or
+        # the direct self-cancel above (memory/pause) — _resolve_terminal_status
+        # inspects the actual job state to tell which one it was, same as the
+        # normal-completion path just above.
         job.limit_reached = len(job.pages) + len(job.login_blocked) >= max_pages
+        await _resolve_terminal_status(job, pause_at_words, url, filters)
         raise
     except Exception as exc:
         job.status = "failed"
@@ -664,20 +702,27 @@ async def run_crawl(
         # instead of just vanishing mid-crawl with nothing ever saved.
         job.publish(job.status_payload())
 
-        if job.status != "paused":
-            await db.save_run(
-                run_id=job.id,
-                source_url=job.source_url,
-                user_id=job.user_id,
-                status=job.status,
-                total_words=job.total_words,
-                pages=list(job.pages.values()),
-                limit_reached=job.limit_reached,
-                login_blocked_count=len(job.login_blocked),
-                domain_scope=job.domain_scope,
-                language=",".join(languages) if languages else None,
-                language_auto_detected=job.detected_language is not None,
-            )
+        # Now saved regardless of status, including "paused" — so a paused
+        # crawl shows up in "recent runs" too instead of only being visible
+        # while its tab happens to still be open. Not picked up by the
+        # crash-recovery auto-resume scan (db.get_crawling_runs() only ever
+        # looks for status='crawling'), so pausing still never auto-continues
+        # on its own — resume_state is included anyway for completeness,
+        # matching what's already checkpointed mid-crawl.
+        await db.save_run(
+            run_id=job.id,
+            source_url=job.source_url,
+            user_id=job.user_id,
+            status=job.status,
+            total_words=job.total_words,
+            pages=list(job.pages.values()),
+            limit_reached=job.limit_reached,
+            login_blocked_count=len(job.login_blocked),
+            domain_scope=job.domain_scope,
+            language=",".join(languages) if languages else None,
+            language_auto_detected=job.detected_language is not None,
+            resume_state=job.resume_state,
+        )
 
         if job.status == "completed":
             await db.record_estimate_actual(job.id, len(job.pages), job.total_words)

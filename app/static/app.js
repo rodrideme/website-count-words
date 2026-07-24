@@ -373,6 +373,7 @@ function initCrawlPage(opts) {
   const loginBlockedEl = document.getElementById("login-blocked-count");
   const limitNote = document.getElementById("limit-note");
   const cancelNote = document.getElementById("cancel-note");
+  const pausedPastNote = document.getElementById("paused-past-note");
   const errorBox = document.getElementById("error-box");
   const tbody = document.getElementById("page-tbody");
   const cancelBtn = document.getElementById("cancel-btn");
@@ -576,6 +577,7 @@ function initCrawlPage(opts) {
     if (opts.initialLimitReached) showLimitNote();
     if (opts.initialStatus === "failed") showError();
     if (opts.initialStatus === "cancelled") cancelNote.style.display = "block";
+    if (opts.initialStatus === "paused") pausedPastNote.style.display = "block";
     showTryDifferentPageNote(opts.initialTotalWords, opts.initialPageCount);
     const initialPages = opts.initialPages || [];
     for (const page of initialPages) {
@@ -588,12 +590,46 @@ function initCrawlPage(opts) {
 
   // live mode
   runDateEl.textContent = "Started: " + formatDate(opts.startedAt);
-  setStatus("starting");
   setStatCount(blockedHostEl, 0);
-  cancelBtn.style.display = "";
   const seenUrls = new Set();
   const pages = [];
   currentPages = pages; // same array reference, kept in sync as pages.push() happens below
+
+  const applyStatus = (data) => {
+    setStatus(data.status);
+    totalWordsEl.textContent = data.total_words.toLocaleString("en-US");
+    updatePageCount(data.page_count);
+    setStatCount(loginBlockedEl, data.login_blocked_count);
+    showDetectedLanguage(data.detected_language);
+    updateSettingsPills(data.domain_scope, data.language_setting, data.detected_language);
+    if (data.limit_reached) showLimitNote();
+    if (data.status === "failed") showError(data.error);
+    if (data.status === "cancelled") {
+      cancelNote.textContent = data.stopped_reason || "This crawl was cancelled — showing partial results.";
+      cancelNote.style.display = "block";
+    }
+    if (TERMINAL_STATUSES.includes(data.status)) {
+      cancelBtn.style.display = "none";
+      showTryDifferentPageNote(data.total_words, data.page_count);
+      if (data.status === "paused") {
+        showEstimatePanel(data.estimate_result);
+      }
+    } else {
+      cancelBtn.style.display = "";
+    }
+  };
+
+  // Render the job's REAL current status immediately, before ever
+  // connecting to SSE — previously this always hardcoded "starting"
+  // regardless of the actual status, so reloading a page that had already
+  // paused (or finished, or failed) misleadingly showed "Crawling" until
+  // the SSE replay caught up moments later.
+  if (opts.initialStatusPayload) {
+    applyStatus(opts.initialStatusPayload);
+  } else {
+    setStatus("starting");
+    cancelBtn.style.display = "";
+  }
 
   proceedBtn.addEventListener("click", async () => {
     proceedBtn.disabled = true;
@@ -635,26 +671,10 @@ function initCrawlPage(opts) {
 
     source.addEventListener("status", (evt) => {
       const data = JSON.parse(evt.data);
-      setStatus(data.status);
-      totalWordsEl.textContent = data.total_words.toLocaleString("en-US");
-      updatePageCount(data.page_count);
-      setStatCount(loginBlockedEl, data.login_blocked_count);
-      showDetectedLanguage(data.detected_language);
-      updateSettingsPills(data.domain_scope, data.language_setting, data.detected_language);
-      if (data.limit_reached) showLimitNote();
-      if (data.status === "failed") showError(data.error);
-      if (data.status === "cancelled") {
-        cancelNote.textContent = data.stopped_reason || "This crawl was cancelled — showing partial results.";
-        cancelNote.style.display = "block";
-      }
+      applyStatus(data);
       if (TERMINAL_STATUSES.includes(data.status)) {
-        cancelBtn.style.display = "none";
         renderSummary(pages);
-        showTryDifferentPageNote(data.total_words, data.page_count);
         source.close();
-        if (data.status === "paused") {
-          showEstimatePanel(data.estimate_result);
-        }
       }
     });
 

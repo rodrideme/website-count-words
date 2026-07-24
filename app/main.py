@@ -128,6 +128,7 @@ async def crawl_page(run_id: str, request: Request, user: User = Depends(require
                 "run_id": run_id,
                 "source_url": job.source_url,
                 "started_at": job.started_at,
+                "initial_status_payload": job.status_payload(),
             },
         )
 

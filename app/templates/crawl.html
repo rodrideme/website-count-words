@@ -39,6 +39,7 @@
   <div class="report-wrap report-body">
     <p class="note" id="limit-note" style="display:none;"></p>
     <p class="note" id="cancel-note" style="display:none;">This crawl was cancelled — showing partial results.</p>
+    <p class="note" id="paused-past-note" style="display:none;">This crawl was paused for an estimate and never resumed — showing partial results from before the pause.</p>
     <p class="note" id="page-issues-note" style="display:none;"></p>
     <details id="page-issues-details" style="display:none;">
       <summary>View all blocked/failed pages</summary>
@@ -140,6 +141,9 @@
       runId: {{ run_id | tojson }},
       sourceUrl: {{ source_url | tojson }},
       startedAt: {{ started_at | default(none) | tojson }},
+      {% if initial_status_payload %}
+      initialStatusPayload: {{ initial_status_payload | tojson }},
+      {% endif %}
       {% if run %}
       initialStatus: {{ run.status | tojson }},
       initialTotalWords: {{ run.total_words | tojson }},
