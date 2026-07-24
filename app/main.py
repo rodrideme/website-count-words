@@ -19,7 +19,7 @@ from app import auth, db
 from app.auth import require_admin, require_user, require_user_api
 from app.crawler import MAX_CONCURRENT_CRAWLS, PAUSE_AT_WORDS, estimate_result_from_snapshot, run_crawl
 from app.job_store import create_job, enqueue, get_job, list_active_jobs, list_queued_jobs, restore_job
-from app.models import CrawlRequest, ShareEmailRequest, User
+from app.models import CrawlRequest, ShareEmailRequest, ShareToggleRequest, User
 from app.notifications import PUBLIC_BASE_URL, send_share_notification
 from app.templates import templates
 
@@ -161,6 +161,7 @@ async def crawl_page(run_id: str, request: Request, user: User = Depends(require
                 "started_at": job.started_at,
                 "initial_status_payload": job.status_payload(),
                 "user": user,
+                "share_recipients": await db.list_run_shares(run_id),
             },
         )
 
@@ -178,6 +179,7 @@ async def crawl_page(run_id: str, request: Request, user: User = Depends(require
             "run": run,
             "initial_pages": [p.model_dump() for p in run.pages],
             "user": user,
+            "share_recipients": await db.list_run_shares(run_id),
         },
     )
 
@@ -198,6 +200,7 @@ async def shared_crawl_page(run_id: str, request: Request):
             "run": run,
             "initial_pages": [p.model_dump() for p in run.pages],
             "user": None,
+            "share_recipients": [],
         },
     )
 
@@ -207,12 +210,14 @@ def _share_url(run_id: str) -> str:
 
 
 @app.post("/crawl/{run_id}/share")
-async def toggle_share(run_id: str, user: User = Depends(require_user_api)):
+async def toggle_share(
+    run_id: str, payload: ShareToggleRequest | None = None, user: User = Depends(require_user_api)
+):
     run = await db.get_run(run_id)
     if run is None or run.user_id != user.id:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    new_state = not run.is_public
+    new_state = payload.is_public if payload is not None and payload.is_public is not None else not run.is_public
     await db.set_run_public(run_id, new_state)
     return JSONResponse({"is_public": new_state, "share_url": _share_url(run_id)})
 
@@ -222,11 +227,31 @@ async def email_share(run_id: str, payload: ShareEmailRequest, user: User = Depe
     run = await db.get_run(run_id)
     if run is None or run.user_id != user.id:
         raise HTTPException(status_code=404, detail="Run not found")
-    if not run.is_public:
-        raise HTTPException(status_code=400, detail="Make this run public before sharing it by email")
 
-    await send_share_notification(payload.email.strip(), user.email, run.source_url, _share_url(run_id))
-    return JSONResponse({"sent": True})
+    email = payload.email.strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="An email address is required")
+
+    # The invite carries the public link, so it can't work while the report is
+    # private — inviting someone is itself the intent to make the link work.
+    if not run.is_public:
+        await db.set_run_public(run_id, True)
+
+    await db.add_run_share(run_id, email)
+    await send_share_notification(email, user.email, run.source_url, _share_url(run_id))
+    return JSONResponse(
+        {"sent": True, "is_public": True, "recipients": await db.list_run_shares(run_id)}
+    )
+
+
+@app.delete("/crawl/{run_id}/share/recipients")
+async def remove_share_recipient(run_id: str, email: str, user: User = Depends(require_user_api)):
+    run = await db.get_run(run_id)
+    if run is None or run.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    await db.remove_run_share(run_id, email.strip())
+    return JSONResponse({"recipients": await db.list_run_shares(run_id)})
 
 
 async def _cancel_job(job_id: str) -> str:

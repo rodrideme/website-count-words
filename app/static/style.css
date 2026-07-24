@@ -300,40 +300,19 @@ ul.recent-runs a.run-row:hover { background: #FCFBF8; text-decoration: none; }
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  flex-wrap: wrap;
 }
 .title-row h1 { flex: 1; }
-.title-row #share-btn { flex-shrink: 0; margin-top: 10px; }
-#run-date { font-size: 13px; color: var(--muted); margin: 0; }
-
-#share-panel #share-link-row {
+.header-actions {
+  display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  flex-shrink: 0;
+  margin-top: 8px;
 }
-#share-link-input {
-  flex: 1;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card);
-  color: var(--text);
-}
-#share-email-form {
-  align-items: center;
-  gap: 8px;
-}
-#share-email-form label { font-size: 13px; color: var(--muted); }
-#share-email-input {
-  font-size: 13px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--card);
-  color: var(--text);
-}
-#share-email-status { margin-top: 8px; }
+.header-actions #share-btn { gap: 9px; height: 38px; padding: 0 20px; font-size: 13px; }
+.header-actions #share-btn svg { width: 15px; height: 15px; }
+.run-date-line { font-size: 13px; color: var(--muted); margin: 0; }
 
 .settings-applied {
   display: flex;
@@ -410,16 +389,35 @@ ul.recent-runs a.run-row:hover { background: #FCFBF8; text-decoration: none; }
   margin-bottom: 20px;
 }
 
-#page-issues-details {
-  margin: -8px 0 20px;
-  font-size: 13px;
-}
-#page-issues-details summary {
+/* The warning and its detail list are one banner: the summary IS the alert
+   row, so the count and the way to inspect it never drift apart. */
+details.note-issues { padding: 0; }
+details.note-issues > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
   cursor: pointer;
-  color: var(--muted);
-  font-weight: 600;
+  list-style: none;
 }
-#page-issues-details summary:hover { color: var(--text); }
+details.note-issues > summary::-webkit-details-marker { display: none; }
+details.note-issues > summary:hover .note-toggle { color: var(--text); }
+.note-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.note-toggle::before {
+  content: "▶";
+  font-size: 9px;
+  transition: transform 0.15s ease;
+}
+details.note-issues[open] > summary .note-toggle::before { transform: rotate(90deg); }
+details.note-issues > ul.issues-list { margin: 0 20px 16px; }
+
 ul.issues-list {
   list-style: none;
   margin: 10px 0 0;
@@ -457,7 +455,6 @@ ul.issues-list .issue-reason {
   flex-wrap: wrap;
   margin-bottom: 44px;
 }
-.action-row .divider-v { width: 1px; height: 22px; background: var(--border); margin: 0 6px; }
 .action-row .label { font-size: 12px; color: var(--muted); }
 .action-row form {
   display: flex;
@@ -477,6 +474,178 @@ ul.issues-list .issue-reason {
 .action-row input.language-input { width: 150px; height: 38px; }
 .action-row select { height: 38px; font-size: 12px; }
 .action-row button[type="submit"] { height: 38px; padding: 0 18px; font-size: 13px; }
+
+/* ---------- Share modal ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(25, 23, 18, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+/* display:flex above wins over the hidden attribute unless it's spelled out. */
+.modal-overlay[hidden] { display: none; }
+
+.modal-card {
+  width: 100%;
+  max-width: 480px;
+  background: var(--card);
+  border-radius: 16px;
+  /* Keeps the footer's fill inside the rounded corners. */
+  overflow: hidden;
+  box-shadow: 0 18px 48px rgba(25, 23, 18, 0.28);
+}
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px 24px 0;
+}
+.modal-head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--faint);
+  font-size: 22px;
+  line-height: 1;
+  height: auto;
+  padding: 2px 4px;
+  margin: -2px -4px 0 0;
+}
+.modal-close:hover { background: none; color: var(--text); }
+.modal-body { padding: 18px 24px 20px; }
+.modal-foot {
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  padding: 18px 24px 20px;
+}
+
+.share-invite-row { display: flex; align-items: center; gap: 10px; }
+#share-email-input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 14px;
+  font-size: 14px;
+  background: var(--bg-input);
+  color: var(--text);
+}
+.share-invite-row button[type="submit"] {
+  flex-shrink: 0;
+  height: 44px;
+  padding: 0 22px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+#share-email-status { margin: 10px 0 0; }
+#share-email-status:empty { display: none; }
+
+.modal-body .section-label { margin: 22px 0 10px; }
+.people-list { list-style: none; margin: 0; padding: 0; }
+.person-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+.person-row .avatar, .icon-circle {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--brand-tint);
+  color: var(--brand);
+  font-size: 15px;
+  font-weight: 700;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+.icon-circle svg { width: 19px; height: 19px; }
+.person-id {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.person-name { font-size: 15px; font-weight: 600; }
+.person-email {
+  font-size: 13px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.person-role { font-size: 13px; color: var(--muted); flex-shrink: 0; }
+.person-remove {
+  background: none;
+  border: none;
+  color: var(--faint);
+  height: auto;
+  padding: 4px 6px;
+  font-size: 17px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.person-remove:hover { background: none; color: var(--danger-text); }
+
+.public-link-row { display: flex; align-items: center; gap: 12px; }
+.switch {
+  flex-shrink: 0;
+  justify-content: flex-start;
+  width: 46px;
+  height: 26px;
+  padding: 3px;
+  border: none;
+  border-radius: 999px;
+  background: #CFCBBD;
+  transition: background 0.18s ease;
+}
+.switch:hover { background: #BDB9AA; }
+.switch[aria-checked="true"], .switch[aria-checked="true"]:hover { background: var(--brand); }
+.switch:disabled { background: var(--border); cursor: not-allowed; }
+.switch-knob {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  box-shadow: 0 1px 2px rgba(25, 23, 18, 0.25);
+  transition: transform 0.18s ease;
+}
+.switch[aria-checked="true"] .switch-knob { transform: translateX(20px); }
+
+.share-link-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+#share-link-input {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0 14px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: var(--card);
+  color: var(--muted);
+}
+.share-link-row button { height: 42px; border-radius: 10px; flex-shrink: 0; }
 
 /* ---------- Pre-crawl estimate panel ---------- */
 .estimate-panel {

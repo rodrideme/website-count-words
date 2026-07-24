@@ -58,6 +58,13 @@ async def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_runs_source_url ON runs(source_url);
         CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id);
 
+        CREATE TABLE IF NOT EXISTS run_shares (
+            run_id TEXT NOT NULL,
+            email TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (run_id, email)
+        );
+
         CREATE TABLE IF NOT EXISTS estimate_history (
             run_id TEXT PRIMARY KEY,
             source_url TEXT NOT NULL,
@@ -211,6 +218,36 @@ async def set_run_public(run_id: str, is_public: bool) -> bool:
     cur = await conn.execute("UPDATE runs SET is_public = ? WHERE id = ?", (int(is_public), run_id))
     await conn.commit()
     return cur.rowcount == 1
+
+
+async def add_run_share(run_id: str, email: str) -> None:
+    """Records that the report's link was emailed to someone. This is a record
+    of who it was sent to, not an access grant — access comes from is_public."""
+    conn = _conn()
+    now = datetime.now(timezone.utc).isoformat()
+    # DO NOTHING, not REPLACE: re-sending to someone already on the list keeps
+    # their original invite date, so the list doesn't reshuffle under them.
+    await conn.execute(
+        "INSERT INTO run_shares (run_id, email, created_at) VALUES (?, ?, ?)"
+        " ON CONFLICT(run_id, email) DO NOTHING",
+        (run_id, email, now),
+    )
+    await conn.commit()
+
+
+async def list_run_shares(run_id: str) -> list[dict]:
+    conn = _conn()
+    async with conn.execute(
+        "SELECT email, created_at FROM run_shares WHERE run_id = ? ORDER BY created_at", (run_id,)
+    ) as cur:
+        rows = await cur.fetchall()
+    return [{"email": row["email"], "created_at": row["created_at"]} for row in rows]
+
+
+async def remove_run_share(run_id: str, email: str) -> None:
+    conn = _conn()
+    await conn.execute("DELETE FROM run_shares WHERE run_id = ? AND email = ?", (run_id, email))
+    await conn.commit()
 
 
 async def save_run(

@@ -80,6 +80,10 @@ function statusLabel(status) {
 }
 
 const TERMINAL_STATUSES = ["completed", "failed", "cancelled", "paused"];
+// A summary email goes out on each of these (see send_crawl_notification in
+// crawler.py). "paused" is deliberately absent — that run still has to resume
+// and finish before anything is sent.
+const EMAILED_STATUSES = ["completed", "failed", "cancelled"];
 
 const DOMAIN_SCOPE_LABELS = {
   all: "Whole domain (incl. subdomains)",
@@ -422,19 +426,31 @@ function initCrawlPage(opts) {
   const adjustBtn = document.getElementById("adjust-btn");
 
   const shareBtn = document.getElementById("share-btn");
-  const sharePanel = document.getElementById("share-panel");
-  const shareStatusText = document.getElementById("share-status-text");
+  const shareModal = document.getElementById("share-modal");
+  const shareModalClose = document.getElementById("share-modal-close");
+  const sharePublicToggle = document.getElementById("share-public-toggle");
   const shareLinkRow = document.getElementById("share-link-row");
   const shareLinkInput = document.getElementById("share-link-input");
   const shareCopyBtn = document.getElementById("share-copy-btn");
   const shareEmailForm = document.getElementById("share-email-form");
   const shareEmailInput = document.getElementById("share-email-input");
   const shareEmailStatus = document.getElementById("share-email-status");
+  const peopleList = document.getElementById("people-list");
+  const emailNoticeLabel = document.getElementById("email-notice-label");
 
   const pageIssuesNote = document.getElementById("page-issues-note");
   const pageIssuesDetails = document.getElementById("page-issues-details");
   const pageIssuesList = document.getElementById("page-issues-list");
   const tryDifferentPageNote = document.getElementById("try-different-page-note");
+
+  const setEmailNotice = (status) => {
+    // Absent on a shared report — there's no owner in that view to email.
+    if (!emailNotice) return;
+    emailNoticeLabel.textContent = EMAILED_STATUSES.includes(status)
+      ? "Summary emailed to"
+      : "Summary will be emailed to";
+    emailNotice.style.display = "inline";
+  };
 
   const showTryDifferentPageNote = (totalWords, pageCount) => {
     // Only meaningful once a crawl has actually finished — total_words is
@@ -465,8 +481,8 @@ function initCrawlPage(opts) {
     // Deliberately no quoted error text here — some of those messages are
     // raw crawl4ai/Playwright internals (file paths, line numbers) that
     // are meaningless to a user. Full detail per page is one click away
-    // in "View all blocked/failed pages" below, where technical text is
-    // fine since it's clearly a diagnostic list, not the headline summary.
+    // under "View blocked/failed pages" in the same banner, where technical
+    // text is fine since it's clearly a diagnostic list, not the headline.
     const lines = [];
     if (blocked.length) {
       lines.push(blocked.length === 1
@@ -480,7 +496,6 @@ function initCrawlPage(opts) {
     }
 
     if (!lines.length) {
-      pageIssuesNote.style.display = "none";
       pageIssuesDetails.style.display = "none";
       return;
     }
@@ -489,7 +504,6 @@ function initCrawlPage(opts) {
       if (i > 0) pageIssuesNote.appendChild(document.createElement("br"));
       pageIssuesNote.appendChild(document.createTextNode(line));
     });
-    pageIssuesNote.style.display = "block";
 
     renderIssuesList([...blocked, ...otherFailed]);
     pageIssuesDetails.style.display = "block";
@@ -611,32 +625,92 @@ function initCrawlPage(opts) {
 
   if (shareBtn) {
     const shareUrl = window.location.origin + "/share/" + opts.runId;
+    let isPublic = !!opts.initialIsPublic;
 
-    const renderShareUI = (isPublic) => {
-      shareBtn.textContent = isPublic ? "Stop sharing" : "Share results";
-      if (isPublic) {
-        shareStatusText.textContent = "This report is public — anyone with the link can view it.";
-        shareLinkInput.value = shareUrl;
-        shareLinkRow.style.display = "flex";
-        shareEmailForm.style.display = "flex";
-        sharePanel.style.display = "block";
-      } else {
-        shareStatusText.textContent = "This report is private.";
-        shareLinkRow.style.display = "none";
-        shareEmailForm.style.display = "none";
-        sharePanel.style.display = "none";
-      }
-      shareEmailStatus.textContent = "";
+    const renderPublicState = (pub) => {
+      isPublic = pub;
+      sharePublicToggle.setAttribute("aria-checked", pub ? "true" : "false");
+      shareLinkInput.value = shareUrl;
+      shareLinkRow.style.display = pub ? "flex" : "none";
     };
 
-    shareBtn.addEventListener("click", async () => {
-      shareBtn.disabled = true;
+    const renderPeople = (recipients) => {
+      // The owner row is server-rendered; everything after it is an invite.
+      while (peopleList.children.length > 1) peopleList.lastElementChild.remove();
+      for (const person of recipients || []) {
+        const li = document.createElement("li");
+        li.className = "person-row";
+
+        const avatar = document.createElement("span");
+        avatar.className = "avatar";
+        avatar.textContent = (person.email[0] || "?").toUpperCase();
+
+        const id = document.createElement("div");
+        id.className = "person-id";
+        const name = document.createElement("span");
+        name.className = "person-name";
+        name.textContent = person.email;
+        const sub = document.createElement("span");
+        sub.className = "person-email";
+        sub.textContent = person.created_at ? "Invited " + formatDate(person.created_at) : "Invited";
+        id.append(name, sub);
+
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "person-remove";
+        remove.textContent = "×";
+        remove.title = "Remove " + person.email;
+        remove.setAttribute("aria-label", "Remove " + person.email);
+        remove.addEventListener("click", async () => {
+          remove.disabled = true;
+          const res = await fetch(
+            "/crawl/" + opts.runId + "/share/recipients?email=" + encodeURIComponent(person.email),
+            { method: "DELETE" },
+          );
+          if (res.ok) {
+            const data = await res.json();
+            renderPeople(data.recipients);
+          } else {
+            remove.disabled = false;
+          }
+        });
+
+        li.append(avatar, id, remove);
+        peopleList.appendChild(li);
+      }
+    };
+
+    const openShareModal = () => {
+      shareModal.hidden = false;
+      shareEmailStatus.textContent = "";
+      shareEmailInput.focus();
+    };
+    const closeShareModal = () => {
+      shareModal.hidden = true;
+      shareBtn.focus();
+    };
+
+    shareBtn.addEventListener("click", openShareModal);
+    shareModalClose.addEventListener("click", closeShareModal);
+    shareModal.addEventListener("click", (evt) => {
+      if (evt.target === shareModal) closeShareModal();
+    });
+    document.addEventListener("keydown", (evt) => {
+      if (evt.key === "Escape" && !shareModal.hidden) closeShareModal();
+    });
+
+    sharePublicToggle.addEventListener("click", async () => {
+      sharePublicToggle.disabled = true;
       try {
-        const res = await fetch("/crawl/" + opts.runId + "/share", { method: "POST" });
+        const res = await fetch("/crawl/" + opts.runId + "/share", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_public: !isPublic }),
+        });
         const data = await res.json();
-        renderShareUI(data.is_public);
+        renderPublicState(data.is_public);
       } finally {
-        shareBtn.disabled = false;
+        sharePublicToggle.disabled = false;
       }
     });
 
@@ -658,25 +732,34 @@ function initCrawlPage(opts) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: shareEmailInput.value.trim() }),
         });
-        shareEmailStatus.textContent = res.ok ? "Sent!" : "Couldn't send — try again.";
-        if (res.ok) shareEmailInput.value = "";
+        if (res.ok) {
+          const data = await res.json();
+          // Inviting someone turns the link on server-side — reflect that here
+          // rather than leaving the switch showing a stale "private".
+          renderPublicState(data.is_public);
+          renderPeople(data.recipients);
+          shareEmailInput.value = "";
+          shareEmailStatus.textContent = "Sent!";
+        } else {
+          shareEmailStatus.textContent = "Couldn't send — try again.";
+        }
       } finally {
         sendBtn.disabled = false;
       }
     });
 
-    if (opts.mode === "live") {
-      shareBtn.disabled = true;
-    } else {
-      renderShareUI(!!opts.initialIsPublic);
-    }
+    renderPublicState(isPublic);
+    renderPeople(opts.initialShareRecipients);
+    // Sharing a half-finished report would hand out a link to partial results.
+    if (opts.mode === "live") shareBtn.disabled = true;
   }
 
   if (opts.mode === "past" || opts.mode === "shared") {
     if (opts.mode === "shared") {
       actionRow.style.display = "none";
     }
-    runDateEl.textContent = "Run: " + formatDate(opts.createdAt);
+    runDateEl.textContent = "Started: " + formatDate(opts.createdAt);
+    setEmailNotice(opts.initialStatus);
     setStatus(opts.initialStatus);
     totalWordsEl.textContent = opts.initialTotalWords.toLocaleString("en-US");
     updatePageCount(opts.initialPageCount);
@@ -705,6 +788,7 @@ function initCrawlPage(opts) {
 
   const applyStatus = (data) => {
     setStatus(data.status);
+    setEmailNotice(data.status);
     totalWordsEl.textContent = data.total_words.toLocaleString("en-US");
     updatePageCount(data.page_count);
     setStatCount(loginBlockedEl, data.login_blocked_count);
@@ -718,7 +802,6 @@ function initCrawlPage(opts) {
     }
     if (TERMINAL_STATUSES.includes(data.status)) {
       cancelBtn.style.display = "none";
-      emailNotice.style.display = "none";
       queuedPanel.style.display = "none";
       if (shareBtn) shareBtn.disabled = false;
       showTryDifferentPageNote(data.total_words, data.page_count);
@@ -727,7 +810,6 @@ function initCrawlPage(opts) {
       }
     } else {
       cancelBtn.style.display = "";
-      emailNotice.style.display = "block";
       if (data.status === "queued") {
         queuedMessageEl.textContent = data.queue_position
           ? `You're #${data.queue_position} in line — this server is busy right now. This will start automatically, and we'll email you when it's done.`
@@ -748,6 +830,7 @@ function initCrawlPage(opts) {
     applyStatus(opts.initialStatusPayload);
   } else {
     setStatus("starting");
+    setEmailNotice("starting");
     cancelBtn.style.display = "";
   }
 

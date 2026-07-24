@@ -5,35 +5,32 @@
     <a href="/">← New crawl</a>
     <div class="title-row">
       <h1>{{ source_url }}</h1>
-      {% if mode != "shared" %}
-      <button type="button" id="share-btn" class="secondary">Share results</button>
-      {% endif %}
+      <div class="header-actions">
+        <button type="button" id="export-csv-btn" class="secondary">Export CSV</button>
+        <button type="button" id="print-btn" class="secondary">Print report</button>
+        {% if mode != "shared" %}
+        <button type="button" id="share-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="18" cy="5" r="3"></circle>
+            <circle cx="6" cy="12" r="3"></circle>
+            <circle cx="18" cy="19" r="3"></circle>
+            <line x1="8.6" y1="10.5" x2="15.4" y2="6.5"></line>
+            <line x1="8.6" y1="13.5" x2="15.4" y2="17.5"></line>
+          </svg>
+          Share results
+        </button>
+        {% endif %}
+      </div>
     </div>
-    <p id="run-date"></p>
+    <p class="run-date-line">
+      <span id="run-date"></span>{% if user %}<span id="email-notice" style="display:none;"> · <span id="email-notice-label"></span> <strong>{{ user.email }}</strong></span>{% endif %}
+    </p>
     <p id="detected-language-note" class="muted" style="display:none;"></p>
     <div class="settings-applied">
       <span class="section-label">Settings applied</span>
       <span class="pill" id="domain-scope-pill"></span>
       <span class="pill" id="language-pill"></span>
     </div>
-    <p class="muted" id="email-notice" style="display:none;">We'll email <strong>{{ user.email }}</strong> a summary when this finishes.</p>
-
-    {% if mode != "shared" %}
-    <div id="share-panel" class="estimate-panel" style="display:none;">
-      <span class="section-label">Share results</span>
-      <p class="muted" id="share-status-text"></p>
-      <div id="share-link-row" style="display:none;">
-        <input type="text" id="share-link-input" readonly>
-        <button type="button" id="share-copy-btn" class="secondary">Copy link</button>
-      </div>
-      <form id="share-email-form" style="display:none;">
-        <label for="share-email-input">Send to:</label>
-        <input type="email" id="share-email-input" placeholder="friend@example.com" required>
-        <button type="submit" class="secondary">Send</button>
-      </form>
-      <p class="muted" id="share-email-status"></p>
-    </div>
-    {% endif %}
   </div>
 
   <div class="totals-bar report-wrap">
@@ -63,9 +60,11 @@
     <p class="note" id="limit-note" style="display:none;"></p>
     <p class="note" id="cancel-note" style="display:none;">This crawl was cancelled — showing partial results.</p>
     <p class="note" id="paused-past-note" style="display:none;">This crawl was paused for an estimate and never resumed — showing partial results from before the pause.</p>
-    <p class="note" id="page-issues-note" style="display:none;"></p>
-    <details id="page-issues-details" style="display:none;">
-      <summary>View all blocked/failed pages</summary>
+    <details class="note note-issues" id="page-issues-details" style="display:none;">
+      <summary>
+        <span id="page-issues-note"></span>
+        <span class="note-toggle">View blocked/failed pages</span>
+      </summary>
       <ul id="page-issues-list" class="issues-list"></ul>
     </details>
     <p class="note" id="try-different-page-note" style="display:none;">Nothing could be counted because the starting page itself couldn't be accessed. If you know another page on this site that might be more accessible (e.g. a blog post or inner page rather than the homepage), try starting the crawl from that URL instead.</p>
@@ -73,9 +72,6 @@
 
     <div class="action-row" id="action-row">
       <button id="cancel-btn" class="danger-outline" style="display:none;">Cancel crawl</button>
-      <button id="print-btn" class="secondary">Print report</button>
-      <button id="export-csv-btn" class="secondary">Export CSV</button>
-      <div class="divider-v"></div>
       <form id="recrawl-form">
         <span class="label">Re-crawl:</span>
         <select id="recrawl-domain-scope" title="Which pages count as part of this site?">
@@ -168,6 +164,60 @@
     </div>
   </div>
 
+  {% if mode != "shared" %}
+  <div class="modal-overlay" id="share-modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="share-modal-title">
+      <div class="modal-head">
+        <h2 id="share-modal-title">Share this report</h2>
+        <button type="button" class="modal-close" id="share-modal-close" aria-label="Close">×</button>
+      </div>
+
+      <div class="modal-body">
+        <form id="share-email-form" class="share-invite-row">
+          <input type="email" id="share-email-input" placeholder="Add people by email" required>
+          <button type="submit">Send</button>
+        </form>
+        <p class="muted" id="share-email-status"></p>
+
+        <div class="section-label">People with access</div>
+        <ul class="people-list" id="people-list">
+          <li class="person-row">
+            {% if user.picture %}<img class="avatar" src="{{ user.picture }}" alt="">{% else %}<span class="avatar">{{ user.name[0] | upper }}</span>{% endif %}
+            <div class="person-id">
+              <span class="person-name">{{ user.name }} (you)</span>
+              <span class="person-email">{{ user.email }}</span>
+            </div>
+            <span class="person-role">Owner</span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="modal-foot">
+        <div class="public-link-row">
+          <span class="icon-circle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9"></circle>
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <path d="M12 3c2.5 2.4 3.8 5.5 3.8 9S14.5 18.6 12 21c-2.5-2.4-3.8-5.5-3.8-9S9.5 5.4 12 3z"></path>
+            </svg>
+          </span>
+          <div class="person-id">
+            <span class="person-name">Public link</span>
+            <span class="person-email">Anyone with the link can view this report</span>
+          </div>
+          <button type="button" class="switch" id="share-public-toggle" role="switch" aria-checked="false" aria-label="Public link">
+            <span class="switch-knob"></span>
+          </button>
+        </div>
+        <div class="share-link-row" id="share-link-row" style="display:none;">
+          <input type="text" id="share-link-input" readonly>
+          <button type="button" id="share-copy-btn" class="secondary">Copy link</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <script src="/static/app.js"></script>
   <script>
     initCrawlPage({
@@ -175,6 +225,7 @@
       runId: {{ run_id | tojson }},
       sourceUrl: {{ source_url | tojson }},
       startedAt: {{ started_at | default(none) | tojson }},
+      initialShareRecipients: {{ share_recipients | default([]) | tojson }},
       {% if initial_status_payload %}
       initialStatusPayload: {{ initial_status_payload | tojson }},
       {% endif %}

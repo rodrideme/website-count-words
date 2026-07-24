@@ -50,3 +50,9 @@ class CrawlRequest(BaseModel):
 
 class ShareEmailRequest(BaseModel):
     email: str
+
+
+class ShareToggleRequest(BaseModel):
+    # Omitted means "flip whatever the current state is" — the switch in the
+    # share dialog always sends an explicit state so it can't drift out of sync.
+    is_public: bool | None = None
