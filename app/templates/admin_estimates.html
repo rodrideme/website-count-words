@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Estimate Accuracy — Admin{% endblock %}
+{% block body %}
+  <div class="page-wrap">
+    <p class="subtitle">Estimate accuracy — what was predicted at the 50k-word pause vs. what each crawl actually turned out to be.</p>
+
+    <div class="section-label">By confidence tier</div>
+    <table class="folder-table" style="margin-bottom:32px;">
+      <thead>
+        <tr><th>Confidence</th><th>Runs</th><th>Avg signed error</th><th>Avg abs error</th></tr>
+      </thead>
+      <tbody>
+        {% for key, stats in by_confidence.items() %}
+        <tr>
+          <td>{{ key }}</td>
+          <td>{{ stats.count }}</td>
+          <td>{{ "%+.1f"|format(stats.avg_signed_pct) }}%</td>
+          <td>{{ stats.avg_abs_pct }}%</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="muted">No completed comparisons yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="section-label">By detected CMS</div>
+    <table class="folder-table" style="margin-bottom:32px;">
+      <thead>
+        <tr><th>CMS</th><th>Runs</th><th>Avg signed error</th><th>Avg abs error</th></tr>
+      </thead>
+      <tbody>
+        {% for key, stats in by_cms.items() %}
+        <tr>
+          <td>{{ key }}</td>
+          <td>{{ stats.count }}</td>
+          <td>{{ "%+.1f"|format(stats.avg_signed_pct) }}%</td>
+          <td>{{ stats.avg_abs_pct }}%</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="muted">No completed comparisons yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div class="section-label">All estimates</div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Site</th><th>Confidence</th><th>CMS</th><th>Sitemap</th>
+            <th>Est. words</th><th>Actual words</th><th>Word error</th>
+            <th>Est. pages</th><th>Actual pages</th><th>Page error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+          <tr>
+            <td class="url-cell">{{ row.source_url }}</td>
+            <td>{{ row.confidence }}</td>
+            <td>{{ row.detected_cms or "—" }}</td>
+            <td>{{ "Yes" if row.sitemap_found else "No" }}</td>
+            <td>{{ "{:,}".format(row.estimated_total_words) }}</td>
+            <td>{{ "{:,}".format(row.actual_total_words) if row.actual_total_words is not none else "pending" }}</td>
+            <td>{{ "%+.1f"|format(row.word_error_pct) + "%" if row.word_error_pct is not none else "—" }}</td>
+            <td>{{ "{:,}".format(row.estimated_total_pages) }}</td>
+            <td>{{ "{:,}".format(row.actual_total_pages) if row.actual_total_pages is not none else "pending" }}</td>
+            <td>{{ "%+.1f"|format(row.page_error_pct) + "%" if row.page_error_pct is not none else "—" }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="10" class="muted">No estimates recorded yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endblock %}

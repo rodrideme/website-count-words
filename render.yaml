@@ -22,6 +22,8 @@ services:
         sync: false
       - key: PUBLIC_BASE_URL
         value: https://wordcounter.wxrks.app
+      - key: ADMIN_EMAILS
+        sync: false
     disk:
       name: wordcounter-data
       mountPath: /var/data

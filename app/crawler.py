@@ -643,6 +643,7 @@ async def run_crawl(
             # completion below, exact rather than estimated.
             job.status = "paused"
             job.estimate_result = await _build_estimate_result(job, url, filters)
+            await db.save_estimate_snapshot(job.id, job.source_url, job.estimate_result)
         else:
             job.status = "completed"
     except asyncio.CancelledError:
@@ -677,6 +678,9 @@ async def run_crawl(
                 language=",".join(languages) if languages else None,
                 language_auto_detected=job.detected_language is not None,
             )
+
+        if job.status == "completed":
+            await db.record_estimate_actual(job.id, len(job.pages), job.total_words)
 
         if job.status in ("completed", "failed", "cancelled"):
             user = await db.get_user(job.user_id)

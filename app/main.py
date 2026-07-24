@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app import auth, db
-from app.auth import require_user, require_user_api
+from app.auth import require_admin, require_user, require_user_api
 from app.crawler import PAUSE_AT_WORDS, run_crawl
 from app.job_store import create_job, get_job, restore_job
 from app.models import CrawlRequest, User
@@ -210,5 +210,46 @@ async def crawl_events(job_id: str, request: Request, user: User = Depends(requi
             "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _error_pct(estimated: int, actual: int | None) -> float | None:
+    if not actual:
+        return None
+    return round((estimated - actual) / actual * 100, 1)
+
+
+def _aggregate_estimate_errors(rows: list[dict], group_key: str) -> dict[str, dict]:
+    groups: dict[str, list[float]] = {}
+    for row in rows:
+        if row["word_error_pct"] is None:
+            continue
+        key = row[group_key] or "(none)"
+        groups.setdefault(key, []).append(row["word_error_pct"])
+    return {
+        key: {
+            "count": len(errors),
+            "avg_signed_pct": round(sum(errors) / len(errors), 1),
+            "avg_abs_pct": round(sum(abs(e) for e in errors) / len(errors), 1),
+        }
+        for key, errors in groups.items()
+    }
+
+
+@app.get("/admin/estimates")
+async def admin_estimates(request: Request, admin: User = Depends(require_admin)):
+    rows = await db.list_estimate_history()
+    for row in rows:
+        row["word_error_pct"] = _error_pct(row["estimated_total_words"], row["actual_total_words"])
+        row["page_error_pct"] = _error_pct(row["estimated_total_pages"], row["actual_total_pages"])
+
+    return templates.TemplateResponse(
+        request,
+        "admin_estimates.html",
+        {
+            "rows": rows,
+            "by_confidence": _aggregate_estimate_errors(rows, "confidence"),
+            "by_cms": _aggregate_estimate_errors(rows, "detected_cms"),
         },
     )

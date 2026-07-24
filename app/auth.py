@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 
 from authlib.integrations.starlette_client import OAuth
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from app import db
@@ -44,6 +44,15 @@ async def require_user_api(request: Request) -> User:
     user = await get_current_user(request)
     if user is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+def require_admin(user: User = Depends(require_user)) -> User:
+    """404, not 403 — a non-admin shouldn't be able to tell this route
+    exists at all, not just that they're forbidden from it."""
+    admin_emails = {e.strip().lower() for e in os.environ.get("ADMIN_EMAILS", "").split(",") if e.strip()}
+    if user.email.lower() not in admin_emails:
+        raise HTTPException(status_code=404)
     return user
 
 

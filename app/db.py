@@ -57,6 +57,23 @@ async def init_db() -> None:
 
         CREATE INDEX IF NOT EXISTS idx_runs_source_url ON runs(source_url);
         CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id);
+
+        CREATE TABLE IF NOT EXISTS estimate_history (
+            run_id TEXT PRIMARY KEY,
+            source_url TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            pages_fetched INTEGER NOT NULL,
+            discovered_total INTEGER NOT NULL,
+            sitemap_count INTEGER,
+            sitemap_found INTEGER NOT NULL,
+            detected_cms TEXT,
+            confidence TEXT NOT NULL,
+            estimated_total_pages INTEGER NOT NULL,
+            estimated_total_words INTEGER NOT NULL,
+            actual_total_pages INTEGER,
+            actual_total_words INTEGER,
+            completed_at TEXT
+        );
         """
     )
     await _connection.commit()
@@ -260,6 +277,49 @@ async def is_cancel_requested(run_id: str) -> bool:
     async with conn.execute("SELECT cancel_requested FROM runs WHERE id = ?", (run_id,)) as cur:
         row = await cur.fetchone()
     return bool(row["cancel_requested"]) if row else False
+
+
+async def save_estimate_snapshot(run_id: str, source_url: str, estimate_result: dict) -> None:
+    """Called exactly once per run, right when it pauses and computes an
+    estimate — a run only ever pauses once (resuming never sets
+    pause_at_words again), so there's nothing to upsert against here."""
+    conn = _conn()
+    now = datetime.now(timezone.utc).isoformat()
+    await conn.execute(
+        """
+        INSERT INTO estimate_history
+            (run_id, source_url, created_at, pages_fetched, discovered_total, sitemap_count,
+             sitemap_found, detected_cms, confidence, estimated_total_pages, estimated_total_words)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            run_id, source_url, now,
+            estimate_result["pages_fetched"], estimate_result["discovered_total"], estimate_result["sitemap_count"],
+            int(estimate_result["sitemap_found"]), estimate_result["detected_cms"], estimate_result["confidence"],
+            estimate_result["total_pages_estimate"], estimate_result["estimated_total_words"],
+        ),
+    )
+    await conn.commit()
+
+
+async def record_estimate_actual(run_id: str, actual_total_pages: int, actual_total_words: int) -> None:
+    """Safe to call unconditionally whenever a run completes — a no-op
+    (affects zero rows) for any run that never paused and so never had an
+    estimate snapshot saved in the first place."""
+    conn = _conn()
+    now = datetime.now(timezone.utc).isoformat()
+    await conn.execute(
+        "UPDATE estimate_history SET actual_total_pages = ?, actual_total_words = ?, completed_at = ? WHERE run_id = ?",
+        (actual_total_pages, actual_total_words, now, run_id),
+    )
+    await conn.commit()
+
+
+async def list_estimate_history() -> list[dict]:
+    conn = _conn()
+    async with conn.execute("SELECT * FROM estimate_history ORDER BY created_at DESC") as cur:
+        rows = await cur.fetchall()
+    return [dict(row) for row in rows]
 
 
 async def list_recent_runs(user_id: int, limit: int = 10) -> list[RunRecord]:
