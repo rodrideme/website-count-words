@@ -22,6 +22,11 @@ class Job:
     max_pages: int
     status: str = "starting"  # starting | queued | crawling | completed | failed | cancelled | paused
     started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    # Bumped on every page result (success, blocked, or failed) — a stall
+    # watchdog (see crawler.py's _stall_watchdog) uses this to detect a crawl
+    # that's gone completely silent (a hung fetch/browser context, not just a
+    # slow one) and auto-cancel it instead of leaving it "crawling" forever.
+    last_progress_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     pages: dict[str, PageResult] = field(default_factory=dict)
     login_blocked: dict[str, PageResult] = field(default_factory=dict)
     total_words: int = 0

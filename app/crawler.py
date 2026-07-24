@@ -212,6 +212,12 @@ def _detect_page_language(html: str | None) -> str | None:
 PAUSE_AT_WORDS = 50_000
 MAX_CONCURRENT_CRAWLS = 3
 _CHECKPOINT_EVERY = 20
+# How long a crawl can go with zero new page results before it's treated as
+# hung (a wedged fetch/browser context, not just a slow site) and cancelled
+# automatically — see _stall_watchdog. Checked periodically rather than
+# exactly on the deadline; _STALL_CHECK_INTERVAL_SECONDS is the poll period.
+STALL_TIMEOUT_SECONDS = 300
+_STALL_CHECK_INTERVAL_SECONDS = 30
 
 _process = psutil.Process()
 _MEMORY_LIMIT_BYTES = int(os.environ.get("MEMORY_LIMIT_MB", "3200")) * 1024 * 1024
@@ -477,6 +483,29 @@ async def _maybe_start_next_queued() -> None:
     )
 
 
+async def _stall_watchdog(job) -> None:
+    """Runs alongside run_crawl's main loop, independent of it — the
+    existing self-cancel checks (_should_cancel, the direct job.task.cancel()
+    after each yielded result) only ever get a chance to run BETWEEN page
+    results, so a genuinely hung fetch or wedged browser context (no more
+    results ever yielded) would otherwise leave a job "crawling" forever,
+    permanently squatting on one of MAX_CONCURRENT_CRAWLS's slots. This task
+    polls job.last_progress_at independently of whatever the main loop is
+    doing, so it can still act even while that loop is stuck."""
+    while True:
+        await asyncio.sleep(_STALL_CHECK_INTERVAL_SECONDS)
+        if job.status not in ("starting", "crawling"):
+            return
+        idle_seconds = (datetime.now(timezone.utc) - job.last_progress_at).total_seconds()
+        if idle_seconds >= STALL_TIMEOUT_SECONDS:
+            job.stopped_reason = (
+                f"This crawl stalled — no page was fetched for over "
+                f"{STALL_TIMEOUT_SECONDS // 60} minutes — and was stopped automatically."
+            )
+            job.request_cancel()
+            return
+
+
 async def run_crawl(
     job_id: str,
     url: str,
@@ -493,6 +522,8 @@ async def run_crawl(
     job.status = "crawling"
     job.domain_scope = domain_scope
     job.language_setting = language
+    job.last_progress_at = datetime.now(timezone.utc)
+    watchdog_task = asyncio.create_task(_stall_watchdog(job))
 
     # Crawls are always unlimited now, so the depth cap just needs to be high
     # enough not to cut off a legitimately deep site.
@@ -506,14 +537,29 @@ async def run_crawl(
     # what pins it to that host and everything beneath it). "top_domain_only"
     # is the opposite restriction — root domain, but excluding other
     # subdomains — which needs the custom TopDomainOnlyFilter above.
+    start_base_domain = get_base_domain(url)
+
     domain_filters: list[URLFilter] = []
     if domain_scope == "subdomain_only":
         hostname = urlparse(url).netloc
         domain_filters.append(DomainFilter(allowed_domains=[hostname]))
     elif domain_scope == "top_domain_only":
         domain_filters.append(TopDomainOnlyFilter(get_base_domain(url)))
-
-    start_base_domain = get_base_domain(url)
+    else:
+        # "all" (whole domain incl. subdomains) still needs an explicit
+        # filter here, not just crawl4ai's own include_external=False below.
+        # That flag recomputes "internal" per page from wherever the browser
+        # actually landed, not the original seed — so a page that redirects
+        # off-domain (e.g. a marriott.com page landing on whotels.com) gets
+        # its own links treated as "internal" relative to the NEW domain,
+        # cascading the crawl into a site this scope was never meant to
+        # include. BFSDeepCrawlStrategy.can_process_url() applies this
+        # filter_chain to every candidate URL regardless of that internal/
+        # external classification, so it's the one place that reliably stops
+        # the cascade even though the one straddling redirect page itself
+        # can't be caught before it's fetched (see _post_fetch_scope_violation
+        # for that).
+        domain_filters.append(DomainFilter(allowed_domains=[start_base_domain]))
 
     def _post_fetch_scope_violation(result) -> bool:
         # crawl4ai's own domain-scope enforcement (include_external,
@@ -635,12 +681,15 @@ async def run_crawl(
                 if result.url in job.pages or result.url in job.login_blocked:
                     continue
 
-                if result.success and _post_fetch_scope_violation(result):
+                if _post_fetch_scope_violation(result):
                     # A redirect took this off the intended domain(s) — see
                     # _post_fetch_scope_violation for why crawl4ai's own
-                    # filtering doesn't already catch this. Not real content
-                    # for this site, so it's excluded entirely rather than
-                    # counted as a page or even shown as a failure.
+                    # filtering doesn't already catch this. Checked for every
+                    # result, not just successful ones — an off-domain URL
+                    # that came back blocked/failed (e.g. by the other
+                    # domain's own anti-bot detection) is still not real
+                    # content for this site, so it's excluded entirely rather
+                    # than counted as a page or even shown as a failure.
                     continue
 
                 title = ""
@@ -659,6 +708,7 @@ async def run_crawl(
                         error="Requires login",
                     )
                     job.login_blocked[result.url] = page
+                    job.last_progress_at = datetime.now(timezone.utc)
                     job.publish(
                         {
                             "type": "login_blocked",
@@ -692,6 +742,7 @@ async def run_crawl(
                     )
 
                 job.pages[result.url] = page
+                job.last_progress_at = datetime.now(timezone.utc)
                 job.publish(
                     {
                         "type": "page",
@@ -739,6 +790,8 @@ async def run_crawl(
         job.status = "failed"
         job.error = str(exc)
     finally:
+        watchdog_task.cancel()
+
         # Runs even through the CancelledError re-raise above, so a direct
         # task cancellation still leaves the job in a proper terminal state
         # instead of just vanishing mid-crawl with nothing ever saved.
