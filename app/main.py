@@ -21,7 +21,7 @@ from app.auth import require_admin, require_user, require_user_api
 from app.crawler import MAX_CONCURRENT_CRAWLS, PAUSE_AT_WORDS, estimate_result_from_snapshot, run_crawl
 from app.job_store import create_job, enqueue, get_job, list_active_jobs, list_queued_jobs, restore_job
 from app.models import CrawlRequest, ShareEmailRequest, ShareToggleRequest, User
-from app.notifications import PUBLIC_BASE_URL, send_share_notification
+from app.notifications import absolute_url, remember_origin, send_share_notification
 from app.templates import templates
 
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled", "paused")
@@ -69,6 +69,15 @@ app.add_middleware(
 )
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 app.include_router(auth.router)
+
+
+@app.middleware("http")
+async def _record_origin(request: Request, call_next):
+    """Emails are sent from background tasks that have no request to build a
+    link from. Recording the origin real traffic arrives on means a missing
+    PUBLIC_BASE_URL degrades to a working link instead of a broken one."""
+    remember_origin(str(request.base_url))
+    return await call_next(request)
 
 
 def _valid_url(url: str) -> bool:
@@ -233,8 +242,8 @@ async def shared_crawl_page(run_id: str, request: Request):
     )
 
 
-def _share_url(run_id: str) -> str:
-    return f"{PUBLIC_BASE_URL}/share/{run_id}" if PUBLIC_BASE_URL else f"/share/{run_id}"
+def _share_url(run_id: str) -> str | None:
+    return absolute_url(f"/share/{run_id}")
 
 
 @app.post("/crawl/{run_id}/share")
@@ -266,7 +275,16 @@ async def email_share(run_id: str, payload: ShareEmailRequest, user: User = Depe
         await db.set_run_public(run_id, True)
 
     await db.add_run_share(run_id, email)
-    await send_share_notification(email, user.email, run.source_url, _share_url(run_id))
+    await send_share_notification(
+        to_email=email,
+        # The name reads better than a raw address in "X shared a report with
+        # you", but not everyone's Google profile has one worth showing.
+        shared_by=user.name or user.email,
+        source_url=run.source_url,
+        share_url=_share_url(run_id),
+        total_words=run.total_words,
+        page_count=run.page_count,
+    )
     return JSONResponse(
         {"sent": True, "is_public": True, "recipients": await db.list_run_shares(run_id)}
     )
