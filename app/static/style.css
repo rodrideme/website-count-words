@@ -694,13 +694,16 @@ ul.issues-list .issue-reason {
 /* ---------- Report grid: folders + top pages ---------- */
 .report-grid {
   display: grid;
-  grid-template-columns: 1.2fr 1fr;
+  /* minmax(0, …), not a bare fr: a grid track's default minimum is its
+     content's, so one long unbroken URL in the top-pages list would widen
+     its column past the page instead of letting .path ellipsize. */
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
   gap: 48px;
   align-items: start;
   margin-bottom: 48px;
 }
 @media (max-width: 720px) {
-  .report-grid { grid-template-columns: 1fr; }
+  .report-grid { grid-template-columns: minmax(0, 1fr); }
 }
 #language-section { margin-bottom: 48px; }
 .report-grid h2, .report-body > h2, #language-section h2 {
