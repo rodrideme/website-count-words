@@ -1,7 +1,8 @@
 <header class="topbar">
   <a class="logo" href="/">
-    <div class="logo-mark">#</div>
-    <div class="logo-name">Word Counter</div>
+    <img class="logo-img" src="/static/brand/logo.svg" alt="wxrks" width="123" height="28">
+    <span class="logo-sep"></span>
+    <span class="logo-name">Word Counter</span>
   </a>
   <div class="user-chip">
     {% if user.picture %}<img src="{{ user.picture }}" alt="">{% else %}<span class="avatar">{{ user.name[0] | upper }}</span>{% endif %}

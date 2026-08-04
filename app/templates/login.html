@@ -3,10 +3,8 @@
 {% block body %}
   <div class="login-screen">
     <div class="login-card">
-      <div class="logo">
-        <div class="logo-mark lg">#</div>
-        <div class="logo-name lg">Word Counter</div>
-      </div>
+      <img class="logo-img lg" src="/static/brand/logo.svg" alt="wxrks" width="197" height="45">
+      <div class="logo-name lg">Word Counter</div>
       <p class="subtitle">Point it at a website. Get a word-count audit, page by page.</p>
       {% if error %}
         <p class="field-error">{{ error }}</p>

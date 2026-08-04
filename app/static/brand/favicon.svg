@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 3321 3321" style="fill-rule:evenodd;clip-rule:evenodd;stroke-linejoin:round;stroke-miterlimit:2;">
+    <title>wxrks</title>
+    <defs>
+        <linearGradient id="wxrks-favicon-gradient" x1="0" y1="0" x2="1" y2="0" gradientUnits="userSpaceOnUse" gradientTransform="matrix(1,0,0,-1,0,-0.003815)"><stop offset="0" style="stop-color:black;stop-opacity:1"/><stop offset="0.03" style="stop-color:black;stop-opacity:1"/><stop offset="1" style="stop-color:rgb(102,102,102);stop-opacity:1"/></linearGradient>
+    </defs>
+    <g transform="matrix(1,0,0,1,-27494.823166,-5067.194657)">
+        <g transform="matrix(1,0,0,1,8066.29983,580.904194)">
+            <path d="M22749.142,4854.41L22749.142,7438.789C22749.142,7641.96 22584.193,7806.909 22381.022,7806.909L19796.643,7806.909C19593.472,7806.909 19428.523,7641.96 19428.523,7438.789L19428.523,4854.41C19428.523,4651.239 19593.472,4486.29 19796.643,4486.29L22381.022,4486.29C22584.193,4486.29 22749.142,4651.239 22749.142,4854.41Z" style="fill:rgb(2,255,51);"/>
+        </g>
+        <g transform="matrix(0.726001,0,0,0.726001,4050.21625,5216.441005)">
+            <g transform="matrix(-15.439829,1682.941444,1682.941444,15.439829,34586.174533,763.766238)">
+                <path d="M-0.003,0.435C0.24,0.437 0.438,0.243 0.44,0C0.442,-0.242 0.248,-0.44 0.006,-0.443L0.009,-0.86C0.482,-0.855 0.861,-0.469 0.857,0.004C0.853,0.477 0.466,0.856 -0.006,0.852L-0.003,0.435Z" style="fill:url(#wxrks-favicon-gradient);fill-rule:nonzero;"/>
+            </g>
+            <g transform="matrix(25.989775,0,0,25.989775,33138.646672,1956.676776)">
+                <path d="M0,55.398C0.032,24.804 24.837,0 55.447,0C86.057,0 110.862,24.804 110.894,55.398L83.892,55.398C83.86,39.701 71.145,27.002 55.447,27.002C39.75,27.002 27.034,39.701 27.002,55.398L0,55.398Z" style="fill-rule:nonzero;"/>
+            </g>
+        </g>
+    </g>
+</svg>

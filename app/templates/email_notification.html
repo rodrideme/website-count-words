@@ -23,9 +23,16 @@
             <td style="background:#175E45; padding:18px 32px;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                 <tr>
-                  <td style="padding-right:10px;">
-                    <div style="width:26px; height:26px; background:#F6F4EF; border-radius:6px; color:#175E45; font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace; font-size:14px; font-weight:700; line-height:26px; text-align:center;">#</div>
+                  {% if logo_url %}
+                  {# A remote PNG, not the SVG: mail clients don't render SVG, and
+                     a relative path has no page to resolve against. Falls back to
+                     the wordmark as text when no absolute URL can be built, and
+                     the alt text covers images-off inboxes. #}
+                  <td style="padding-right:12px;">
+                    <img src="{{ logo_url }}" alt="wxrks" width="88" height="20" style="display:block; width:88px; height:20px; border:0;">
                   </td>
+                  <td style="padding-right:12px;"><div style="width:1px; height:18px; background:#3F7A63;"></div></td>
+                  {% endif %}
                   <td style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif; color:#FFFFFF; font-size:16px; font-weight:700; letter-spacing:-0.2px;">Word&nbsp;Counter</td>
                 </tr>
               </table>

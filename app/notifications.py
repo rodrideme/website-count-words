@@ -66,7 +66,9 @@ async def _send_email(to_email: str, subject: str, **context) -> None:
     if not MAILGUN_API_KEY or not MAILGUN_DOMAIN:
         return
 
-    html = templates.env.get_template("email_notification.html").render(**context)
+    html = templates.env.get_template("email_notification.html").render(
+        logo_url=absolute_url("/static/brand/logo-email.png"), **context
+    )
 
     # Plain-text alternative — some clients show it, and spam filters like
     # seeing one that actually matches the HTML.
