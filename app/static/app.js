@@ -388,7 +388,7 @@ function renderSummary(pages) {
 }
 
 function setStatCount(el, count) {
-  el.textContent = count;
+  el.textContent = count.toLocaleString("en-US");
   el.classList.toggle("zero", count === 0);
 }
 
@@ -524,7 +524,7 @@ function initCrawlPage(opts) {
   };
 
   const updatePageCount = (count) => {
-    pageCountEl.textContent = count;
+    pageCountEl.textContent = count.toLocaleString("en-US");
     pagesHeadingCountEl.textContent = count ? `— ${count.toLocaleString("en-US")} crawled` : "";
   };
 

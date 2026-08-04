@@ -25,6 +25,9 @@ from app.notifications import absolute_url, remember_origin, send_share_notifica
 from app.templates import templates
 
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled", "paused")
+# Terminal *and* not resumable — these have nothing left to stream, so the
+# crawl page reads them back from the DB instead of using the live view.
+_FINISHED_STATUSES = ("completed", "failed", "cancelled")
 
 
 @asynccontextmanager
@@ -187,7 +190,8 @@ async def resume_crawl(job_id: str, user: User = Depends(require_user_api)):
 @app.get("/crawl/{run_id}")
 async def crawl_page(run_id: str, request: Request, user: User = Depends(require_user)):
     job = get_job(run_id)
-    if job is not None:
+
+    def live_view():
         return templates.TemplateResponse(
             request,
             "crawl.html",
@@ -198,12 +202,29 @@ async def crawl_page(run_id: str, request: Request, user: User = Depends(require
                 "started_at": job.started_at,
                 "initial_status_payload": job.status_payload(),
                 "user": user,
-                "share_recipients": await db.list_run_shares(run_id),
+                "share_recipients": share_recipients,
             },
         )
 
+    share_recipients = await db.list_run_shares(run_id)
+
+    # A finished run gets the saved view, even while its job is still in
+    # memory. The live view builds its summary from the SSE replay, so on a
+    # very large crawl a replay that doesn't make it through leaves the page
+    # showing a "Completed" header with no folder or top-pages tables. There
+    # is nothing to stream once a run is over, so read it back from the DB
+    # and let the page render itself server-side.
+    # "paused" is not a finished state here: it's resumable, and the live view
+    # is what carries its estimate panel and the Proceed button.
+    if job is not None and job.status not in _FINISHED_STATUSES:
+        return live_view()
+
     run = await db.get_run(run_id)
     if run is None:
+        # Terminal in memory but not written yet — save_run() runs moments
+        # after the status flips. The live view still resolves through SSE.
+        if job is not None:
+            return live_view()
         raise HTTPException(status_code=404, detail="Crawl not found")
 
     return templates.TemplateResponse(
@@ -216,7 +237,7 @@ async def crawl_page(run_id: str, request: Request, user: User = Depends(require
             "run": run,
             "initial_pages": [p.model_dump() for p in run.pages],
             "user": user,
-            "share_recipients": await db.list_run_shares(run_id),
+            "share_recipients": share_recipients,
         },
     )
 
