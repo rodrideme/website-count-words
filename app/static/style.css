@@ -836,6 +836,14 @@ ol#top-pages-list .words { font-family: var(--font-mono); font-size: 13px; font-
 /* Paginated tables page rather than scroll — an inner scrollbar on top of
    page links makes it unclear which one moves you through the list. */
 .table-scroll.table-paged { max-height: none; }
+
+.page-more {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 12px;
+}
+.page-more .muted { font-size: 13px; }
 table { width: 100%; border-collapse: collapse; margin: 0; font-size: 13px; }
 th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid #F0EDE4; }
 th {

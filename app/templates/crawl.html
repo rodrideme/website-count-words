@@ -162,6 +162,10 @@
         <tbody id="page-tbody"></tbody>
       </table>
     </div>
+    <div class="page-more" id="page-more" style="display:none;">
+      <button type="button" class="secondary" id="page-more-btn">Show more</button>
+      <span class="muted" id="page-more-note"></span>
+    </div>
   </div>
 
   {% if mode != "shared" %}
@@ -237,6 +241,7 @@
       initialLimitReached: {{ run.limit_reached | tojson }},
       createdAt: {{ run.created_at | tojson }},
       initialPages: {{ initial_pages | tojson }},
+      summary: {{ summary | tojson }},
       domainScope: {{ run.domain_scope | tojson }},
       languageSetting: {{ run.language | tojson }},
       languageAutoDetected: {{ run.language_auto_detected | tojson }},

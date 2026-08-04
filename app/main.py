@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import math
 import os
@@ -16,8 +18,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import auth, db
-from app.auth import require_admin, require_user, require_user_api
+from app import auth, db, report
+from app.auth import get_current_user, require_admin, require_user, require_user_api
 from app.crawler import MAX_CONCURRENT_CRAWLS, PAUSE_AT_WORDS, estimate_result_from_snapshot, run_crawl
 from app.job_store import create_job, enqueue, get_job, list_active_jobs, list_queued_jobs, restore_job
 from app.models import CrawlRequest, ShareEmailRequest, ShareToggleRequest, User
@@ -235,7 +237,8 @@ async def crawl_page(run_id: str, request: Request, user: User = Depends(require
             "run_id": run_id,
             "source_url": run.source_url,
             "run": run,
-            "initial_pages": [p.model_dump() for p in run.pages],
+            "summary": report.summarize(run.pages),
+            "initial_pages": [report.page_row(p) for p in run.pages[: report.PAGE_ROWS]],
             "user": user,
             "share_recipients": share_recipients,
         },
@@ -256,10 +259,76 @@ async def shared_crawl_page(run_id: str, request: Request):
             "run_id": run_id,
             "source_url": run.source_url,
             "run": run,
-            "initial_pages": [p.model_dump() for p in run.pages],
+            "summary": report.summarize(run.pages),
+            "initial_pages": [report.page_row(p) for p in run.pages[: report.PAGE_ROWS]],
             "user": None,
             "share_recipients": [],
         },
+    )
+
+
+async def _readable_run(run_id: str, user: User | None):
+    """A run the caller may read: their own, or any run with its public link on.
+    404 rather than 403 so a private run isn't distinguishable from a missing one."""
+    run = await db.get_run(run_id)
+    if run is None or not (run.is_public or (user is not None and run.user_id == user.id)):
+        raise HTTPException(status_code=404, detail="Crawl not found")
+    return run
+
+
+@app.get("/crawl/{run_id}/pages")
+async def crawl_pages(run_id: str, offset: int = 0, limit: int = report.PAGE_ROWS,
+                      user: User | None = Depends(get_current_user)):
+    """Rows for the pages table, fetched as the reader asks for more. Embedding
+    all of them is what made a large report unopenable."""
+    run = await _readable_run(run_id, user)
+    offset = max(0, offset)
+    limit = max(1, min(limit, 1000))
+    rows = run.pages[offset : offset + limit]
+    return JSONResponse({
+        "pages": [report.page_row(p) for p in rows],
+        "offset": offset,
+        "total": len(run.pages),
+        "has_more": offset + len(rows) < len(run.pages),
+    })
+
+
+@app.get("/crawl/{run_id}/export.csv")
+async def export_csv(run_id: str, user: User | None = Depends(get_current_user)):
+    """Built and streamed here rather than in the browser — the CSV for a large
+    run is bigger than the page should ever hold in memory."""
+    run = await _readable_run(run_id, user)
+    host = (urlsplit(run.source_url).hostname or "crawl").replace("www.", "")
+
+    def rows():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+
+        def flush():
+            value = buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+            return value
+
+        writer.writerow(["URL", "Title", "Words", "Status", "Error"])
+        # Chunked rather than yielded per row: every yield is its own ASGI
+        # message, and 164k of them cost ~20s in overhead alone.
+        for i, page in enumerate(run.pages, 1):
+            status = ("blocked" if page.blocked_by_host
+                      else "login_required" if page.login_required
+                      else "ok" if page.success else "failed")
+            writer.writerow([
+                page.url, page.title or "", page.word_count if page.success else "",
+                status, page.error or "",
+            ])
+            if i % 2000 == 0:
+                yield flush()
+        yield flush()
+
+    return StreamingResponse(
+        rows(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{host}-word-count.csv"'},
     )
 
 

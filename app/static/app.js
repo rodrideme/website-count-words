@@ -147,7 +147,7 @@ function concurrencyLabel(count) {
   return "Busy";
 }
 
-function renderPageRow(tbody, page) {
+function renderPageRow(tbody, page, append) {
   const tr = document.createElement("tr");
   if (page.blocked_by_host) {
     tr.className = "page-blocked-host";
@@ -175,8 +175,17 @@ function renderPageRow(tbody, page) {
   openLink.textContent = "Open ↗";
   openTd.appendChild(openLink);
   tr.append(urlTd, titleTd, wordsTd, openTd);
-  tbody.prepend(tr);
+  // Live mode prepends so the newest page appears at the top as it streams in;
+  // a saved report appends so paged-in rows continue the list in order.
+  if (append) tbody.appendChild(tr);
+  else tbody.prepend(tr);
 }
+
+// A saved report never puts more than this many rows in the DOM. Past roughly
+// this point the table stops being something anyone reads and starts being the
+// reason the tab hangs — 164k rows is a million DOM nodes. The CSV export is
+// the complete list.
+const PAGE_LIST_MAX = 5000;
 
 function folderForUrl(url) {
   try {
@@ -212,24 +221,29 @@ function renderExpandableTableRows(tbody, rows, colSpan, renderRowFn) {
   tbody.appendChild(tr);
 }
 
-function renderFolderRow([folder, stats], maxWords) {
+function renderFolderRow(group, maxWords) {
+  // Live mode still groups in the browser and passes [name, {count, words}];
+  // a saved report gets {name, pages, words} already grouped by the server.
+  const name = Array.isArray(group) ? group[0] : group.name;
+  const words = Array.isArray(group) ? group[1].words : group.words;
+  const count = Array.isArray(group) ? group[1].count : group.pages;
   const tr = document.createElement("tr");
 
   const folderTd = document.createElement("td");
   const bar = document.createElement("div");
   bar.className = "folder-bar";
-  bar.style.width = Math.max(1, Math.round((stats.words / maxWords) * 100)) + "%";
+  bar.style.width = Math.max(1, Math.round((words / maxWords) * 100)) + "%";
   const folderSpan = document.createElement("span");
-  folderSpan.textContent = folder;
+  folderSpan.textContent = name;
   folderTd.append(bar, folderSpan);
 
   const countTd = document.createElement("td");
   countTd.className = "folder-pages";
-  countTd.innerHTML = `<span>${stats.count.toLocaleString("en-US")}</span>`;
+  countTd.innerHTML = `<span>${count.toLocaleString("en-US")}</span>`;
 
   const wordsTd = document.createElement("td");
   wordsTd.className = "folder-words";
-  wordsTd.innerHTML = `<span>${stats.words.toLocaleString("en-US")}</span>`;
+  wordsTd.innerHTML = `<span>${words.toLocaleString("en-US")}</span>`;
 
   tr.append(folderTd, countTd, wordsTd);
   return tr;
@@ -330,29 +344,38 @@ function renderPageListItem(page, i) {
   return li;
 }
 
-function renderTopPages(pages) {
-  const list = document.getElementById("top-pages-list");
-  const top = pages.filter((p) => p.success).sort((a, b) => b.word_count - a.word_count);
-
+// Shows the first SUMMARY_ROW_LIMIT rows with a link that reveals the rest.
+// `label` overrides the link text when the list itself is already a cut down
+// version of a much longer one.
+function fillExpandableList(list, rows, total, label) {
   const fill = (items) => {
     list.innerHTML = "";
-    items.forEach((page, i) => list.appendChild(renderPageListItem(page, i)));
+    for (const row of items) list.appendChild(row);
   };
-  fill(top.slice(0, SUMMARY_ROW_LIMIT));
+  fill(rows.slice(0, SUMMARY_ROW_LIMIT));
+  if (rows.length <= SUMMARY_ROW_LIMIT) return;
 
-  if (top.length > SUMMARY_ROW_LIMIT) {
-    const li = document.createElement("li");
-    li.className = "show-all-row";
-    const link = document.createElement("a");
-    link.href = "#";
-    link.textContent = `Show all ${top.length.toLocaleString("en-US")}`;
-    link.addEventListener("click", (e) => {
-      e.preventDefault();
-      fill(top);
-    });
-    li.appendChild(link);
-    list.appendChild(li);
-  }
+  const li = document.createElement("li");
+  li.className = "show-all-row";
+  const link = document.createElement("a");
+  link.href = "#";
+  link.textContent = label || `Show all ${total.toLocaleString("en-US")}`;
+  link.addEventListener("click", (e) => {
+    e.preventDefault();
+    fill(rows);
+  });
+  li.appendChild(link);
+  list.appendChild(li);
+}
+
+function renderTopPages(pages) {
+  const top = pages.filter((p) => p.success).sort((a, b) => b.word_count - a.word_count);
+  fillExpandableList(
+    document.getElementById("top-pages-list"),
+    top.map((p, i) => renderPageListItem(p, i)),
+    top.length,
+    null,
+  );
 }
 
 function pagesToCsv(pages) {
@@ -384,6 +407,31 @@ function renderSummary(pages) {
   renderTopPages(pages);
   renderFolderGroups(pages);
   renderLanguageGroups(pages);
+  document.getElementById("summary").style.display = "";
+}
+
+// Saved reports get their totals already grouped by the server, so the browser
+// never has to hold every crawled page just to add up folders. See app/report.py.
+function renderServerSummary(summary) {
+  const topList = document.getElementById("top-pages-list");
+  const topRows = summary.top_pages.map((p, i) => renderPageListItem(p, i));
+  fillExpandableList(topList, topRows, summary.top_pages.length,
+    summary.top_pages_capped ? `Show top ${summary.top_pages.length.toLocaleString("en-US")}` : null);
+
+  const renderGroups = (rows, tbodyId) => {
+    const max = rows.length ? rows[0].words : 1;
+    renderExpandableTableRows(document.getElementById(tbodyId), rows, 3, (row) => renderFolderRow(row, max));
+  };
+  renderGroups(summary.folders, "folder-tbody");
+
+  const section = document.getElementById("language-section");
+  if (summary.languages.length < 2) {
+    section.style.display = "none";
+  } else {
+    renderGroups(summary.languages, "language-tbody");
+    section.style.display = "";
+  }
+
   document.getElementById("summary").style.display = "";
 }
 
@@ -446,6 +494,7 @@ function initCrawlPage(opts) {
   const peopleList = document.getElementById("people-list");
   const emailNoticeLabel = document.getElementById("email-notice-label");
 
+  const pageMore = document.getElementById("page-more");
   const pageIssuesNote = document.getElementById("page-issues-note");
   const pageIssuesDetails = document.getElementById("page-issues-details");
   const pageIssuesList = document.getElementById("page-issues-list");
@@ -587,8 +636,92 @@ function initCrawlPage(opts) {
         return "crawl";
       }
     })();
-    downloadCsv(`${host}-word-count.csv`, pagesToCsv(currentPages));
+    // A saved report only holds the first slice of rows, so the file is built
+    // and streamed by the server. A live crawl isn't saved yet, so that one is
+    // still assembled here from what has streamed in so far.
+    if (opts.mode === "live") {
+      downloadCsv(`${host}-word-count.csv`, pagesToCsv(currentPages));
+    } else {
+      window.location.href = `/crawl/${opts.runId}/export.csv`;
+    }
   });
+
+  // Same banner as updateBlockedHostCount(), but driven by the server's counts
+  // instead of counting a pages array the saved report no longer holds.
+  const applyIssueSummary = (summary) => {
+    setStatCount(blockedHostEl, summary.blocked_count);
+    const lines = [];
+    if (summary.blocked_count) {
+      lines.push(summary.blocked_count === 1
+        ? "1 page was blocked by this site's own bot detection."
+        : `${summary.blocked_count.toLocaleString("en-US")} pages were blocked by this site's own bot detection.`);
+    }
+    if (summary.failed_count) {
+      lines.push(summary.failed_count === 1
+        ? "1 page failed to load."
+        : `${summary.failed_count.toLocaleString("en-US")} pages failed to load.`);
+    }
+    if (!lines.length) {
+      pageIssuesDetails.style.display = "none";
+      return;
+    }
+    pageIssuesNote.textContent = "";
+    lines.forEach((line, i) => {
+      if (i > 0) pageIssuesNote.appendChild(document.createElement("br"));
+      pageIssuesNote.appendChild(document.createTextNode(line));
+    });
+    renderIssuesList(summary.issues);
+    if (summary.issues_capped) {
+      const li = document.createElement("li");
+      li.className = "muted";
+      li.textContent = `Showing the first ${summary.issues.length.toLocaleString("en-US")} — export the CSV for the rest.`;
+      pageIssuesList.appendChild(li);
+    }
+    pageIssuesDetails.style.display = "block";
+  };
+
+  const initPagePaging = (total, shown) => {
+    let loaded = shown;
+    const note = document.getElementById("page-more-note");
+    const btn = document.getElementById("page-more-btn");
+
+    const update = () => {
+      if (loaded >= total) {
+        pageMore.style.display = total > PAGE_LIST_MAX ? "flex" : "none";
+        btn.style.display = "none";
+        return;
+      }
+      pageMore.style.display = "flex";
+      if (loaded >= PAGE_LIST_MAX) {
+        btn.style.display = "none";
+        note.textContent =
+          `Showing the first ${loaded.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} pages.` +
+          " Export the CSV for the complete list.";
+        return;
+      }
+      btn.style.display = "";
+      btn.disabled = false;
+      btn.textContent = "Show more";
+      note.textContent = `${loaded.toLocaleString("en-US")} of ${total.toLocaleString("en-US")}`;
+    };
+
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      btn.textContent = "Loading…";
+      const limit = Math.min(500, PAGE_LIST_MAX - loaded);
+      try {
+        const res = await fetch(`/crawl/${opts.runId}/pages?offset=${loaded}&limit=${limit}`);
+        const data = await res.json();
+        for (const page of data.pages) renderPageRow(tbody, page, true);
+        loaded += data.pages.length;
+      } catch (e) {
+        note.textContent = "Couldn't load more pages.";
+      }
+      update();
+    });
+
+    update();
+  };
 
   const setStatus = (status) => {
     statusBadge.className = badgeClass(status);
@@ -778,12 +911,14 @@ function initCrawlPage(opts) {
     if (opts.initialStatus === "cancelled") cancelNote.style.display = "block";
     if (opts.initialStatus === "paused") pausedPastNote.style.display = "block";
     showTryDifferentPageNote(opts.initialTotalWords, opts.initialPageCount);
+
+    // A saved report is handed totals the server already grouped plus the first
+    // slice of rows — never every page. See app/report.py for why.
     const initialPages = opts.initialPages || [];
-    for (const page of initialPages) {
-      renderPageRow(tbody, page);
-    }
-    updateBlockedHostCount(initialPages);
-    renderSummary(initialPages);
+    for (const page of initialPages) renderPageRow(tbody, page, true);
+    applyIssueSummary(opts.summary);
+    renderServerSummary(opts.summary);
+    initPagePaging(opts.summary.total_pages, initialPages.length);
     return;
   }
 
@@ -867,7 +1002,17 @@ function initCrawlPage(opts) {
       if (seenUrls.has(data.page.url)) return;
       seenUrls.add(data.page.url);
       pages.push(data.page);
-      renderPageRow(tbody, data.page);
+      // Stop growing the DOM past the cap — the counts and the summary keep
+      // using every page, but a long crawl shouldn't end up with a row per
+      // page in the table while you're watching it.
+      if (pages.length <= PAGE_LIST_MAX) {
+        renderPageRow(tbody, data.page);
+      } else if (pages.length === PAGE_LIST_MAX + 1) {
+        pageMore.style.display = "flex";
+        document.getElementById("page-more-btn").style.display = "none";
+        document.getElementById("page-more-note").textContent =
+          `Showing the most recent ${PAGE_LIST_MAX.toLocaleString("en-US")} pages while this crawl runs.`;
+      }
       totalWordsEl.textContent = data.total_words.toLocaleString("en-US");
       updatePageCount(pages.length);
       updateBlockedHostCount(pages);
