@@ -627,6 +627,27 @@ function initCrawlPage(opts) {
 
   printBtn.addEventListener("click", () => window.print());
 
+  const deleteBtn = document.getElementById("delete-btn");
+  if (deleteBtn) {
+    // Only offered once there's a saved run to delete — mid-crawl the server
+    // refuses anyway, since the crawler would re-save the row on finishing.
+    if (opts.mode !== "live") deleteBtn.style.display = "";
+    deleteBtn.addEventListener("click", async () => {
+      if (!confirm(`Delete this crawl of ${opts.sourceUrl}? This can't be undone.`)) return;
+      deleteBtn.disabled = true;
+      deleteBtn.textContent = "Deleting…";
+      const res = await fetch("/crawl/" + opts.runId, { method: "DELETE" });
+      if (res.ok) {
+        window.location.href = "/";
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      deleteBtn.disabled = false;
+      deleteBtn.textContent = "Delete run";
+      alert(data.detail || "Could not delete this crawl.");
+    });
+  }
+
   let currentPages = opts.initialPages || [];
   exportCsvBtn.addEventListener("click", () => {
     const host = (() => {

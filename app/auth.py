@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import os
+import uuid
 
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -10,7 +12,29 @@ from app import db
 from app.models import User
 from app.templates import templates
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+# The run copied into every new account so the first sign-in isn't an empty
+# page. Matched by URL rather than run id so re-crawling the site refreshes
+# what new users see, with no config change and no id to look up.
+SAMPLE_RUN_URL = os.environ.get("SAMPLE_RUN_URL", "https://wxrks.com")
+
+
+async def seed_sample_run(user_id: int) -> None:
+    """Best effort: a new account signing in must never fail because the demo
+    run is missing or the copy went wrong."""
+    if not SAMPLE_RUN_URL:
+        return
+    try:
+        template = await db.get_latest_run(db.normalize_url(SAMPLE_RUN_URL))
+        if template is None:
+            logger.info("No completed run for SAMPLE_RUN_URL=%s — new account starts empty", SAMPLE_RUN_URL)
+            return
+        await db.copy_run_to_user(template, user_id, uuid.uuid4().hex, as_sample=True)
+    except Exception:
+        logger.exception("Could not seed the sample run for user %s", user_id)
 
 oauth = OAuth()
 oauth.register(
@@ -79,12 +103,14 @@ async def auth_callback(request: Request):
     if userinfo is None:
         return RedirectResponse(url="/login?error=Could+not+read+Google+profile", status_code=302)
 
-    user = await db.get_or_create_user(
+    user, created = await db.get_or_create_user(
         google_sub=userinfo["sub"],
         email=userinfo.get("email", ""),
         name=userinfo.get("name") or userinfo.get("email", "User"),
         picture=userinfo.get("picture"),
     )
+    if created:
+        await seed_sample_run(user.id)
     request.session["user_id"] = user.id
     return RedirectResponse(url="/", status_code=302)
 

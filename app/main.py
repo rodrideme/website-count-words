@@ -276,6 +276,22 @@ async def _readable_run(run_id: str, user: User | None):
     return run
 
 
+@app.delete("/crawl/{run_id}")
+async def delete_crawl(run_id: str, user: User = Depends(require_user_api)):
+    run = await db.get_run(run_id)
+    if run is None or run.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Crawl not found")
+
+    # A crawl still working would carry on writing to a row that no longer
+    # exists, and would re-save itself on finishing. Make the caller stop it.
+    job = get_job(run_id)
+    if job is not None and job.status not in _FINISHED_STATUSES:
+        raise HTTPException(status_code=409, detail="Stop this crawl before deleting it")
+
+    await db.delete_run(run_id)
+    return JSONResponse({"deleted": True})
+
+
 @app.get("/crawl/{run_id}/pages")
 async def crawl_pages(run_id: str, offset: int = 0, limit: int = report.PAGE_ROWS,
                       user: User | None = Depends(get_current_user)):

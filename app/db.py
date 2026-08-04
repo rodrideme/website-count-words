@@ -119,6 +119,9 @@ async def _ensure_columns() -> None:
     if "is_public" not in existing:
         await conn.execute("ALTER TABLE runs ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0")
         await conn.commit()
+    if "is_sample" not in existing:
+        await conn.execute("ALTER TABLE runs ADD COLUMN is_sample INTEGER NOT NULL DEFAULT 0")
+        await conn.commit()
 
     cur = await conn.execute("PRAGMA table_info(estimate_history)")
     existing_estimate_cols = {row["name"] for row in await cur.fetchall()}
@@ -147,12 +150,15 @@ def _conn() -> aiosqlite.Connection:
     return _connection
 
 
-async def get_or_create_user(google_sub: str, email: str, name: str, picture: str | None) -> User:
+async def get_or_create_user(google_sub: str, email: str, name: str, picture: str | None) -> tuple[User, bool]:
+    """Returns the user and whether this call is what created them — the caller
+    seeds the sample run on a genuinely new account, and only once."""
     conn = _conn()
     async with conn.execute("SELECT * FROM users WHERE google_sub = ?", (google_sub,)) as cur:
         row = await cur.fetchone()
     if row is not None:
-        return User(id=row["id"], google_sub=row["google_sub"], email=row["email"], name=row["name"], picture=row["picture"])
+        user = User(id=row["id"], google_sub=row["google_sub"], email=row["email"], name=row["name"], picture=row["picture"])
+        return user, False
 
     now = datetime.now(timezone.utc).isoformat()
     cur = await conn.execute(
@@ -160,7 +166,7 @@ async def get_or_create_user(google_sub: str, email: str, name: str, picture: st
         (google_sub, email, name, picture, now),
     )
     await conn.commit()
-    return User(id=cur.lastrowid, google_sub=google_sub, email=email, name=name, picture=picture)
+    return User(id=cur.lastrowid, google_sub=google_sub, email=email, name=name, picture=picture), True
 
 
 async def get_user(user_id: int) -> User | None:
@@ -190,6 +196,7 @@ def _row_to_run(row: aiosqlite.Row) -> RunRecord:
         language_auto_detected=bool(row["language_auto_detected"]),
         resume_state=json.loads(resume_state_json) if resume_state_json else None,
         is_public=bool(row["is_public"]),
+        is_sample=bool(row["is_sample"]),
         pages=pages,
     )
 
@@ -417,7 +424,7 @@ async def list_estimate_history() -> list[dict]:
 # Listing screens show one line per run and never touch the page rows, so they
 # deliberately avoid pages_json — parsing it for every run is what would make
 # "all runs" expensive on an account (or a server) with a lot of history.
-_RUN_SUMMARY_COLUMNS = "id, source_url, created_at, status, total_words, page_count, is_public"
+_RUN_SUMMARY_COLUMNS = "id, source_url, created_at, status, total_words, page_count, is_public, is_sample"
 
 
 def _row_to_run_summary(row: aiosqlite.Row) -> dict:
@@ -429,11 +436,40 @@ def _row_to_run_summary(row: aiosqlite.Row) -> dict:
         "total_words": row["total_words"],
         "page_count": row["page_count"],
         "is_public": bool(row["is_public"]),
+        "is_sample": bool(row["is_sample"]),
     }
     if "owner_email" in row.keys():
         summary["owner_email"] = row["owner_email"]
         summary["owner_name"] = row["owner_name"]
     return summary
+
+
+async def delete_run(run_id: str) -> None:
+    """Removes the run and everything hanging off it. estimate_history is kept
+    deliberately — it's the admin accuracy record, and dropping rows would
+    quietly bias it toward whichever runs nobody happened to delete."""
+    conn = _conn()
+    await conn.execute("DELETE FROM run_shares WHERE run_id = ?", (run_id,))
+    await conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+    await conn.commit()
+
+
+async def copy_run_to_user(run: RunRecord, user_id: int, run_id: str, as_sample: bool = False) -> None:
+    conn = _conn()
+    now = datetime.now(timezone.utc).isoformat()
+    await conn.execute(
+        "INSERT INTO runs (id, source_url, user_id, created_at, status, total_words, page_count,"
+        " limit_reached, pages_json, login_blocked_count, domain_scope, language,"
+        " language_auto_detected, is_sample)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            run_id, run.source_url, user_id, now, run.status, run.total_words, run.page_count,
+            int(run.limit_reached), json.dumps([p.model_dump() for p in run.pages]),
+            run.login_blocked_count, run.domain_scope, run.language,
+            int(run.language_auto_detected), int(as_sample),
+        ),
+    )
+    await conn.commit()
 
 
 async def count_user_runs(user_id: int) -> int:

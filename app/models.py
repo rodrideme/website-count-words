@@ -38,6 +38,9 @@ class RunRecord(BaseModel):
     language_auto_detected: bool = False
     resume_state: dict | None = None
     is_public: bool = False
+    # A copy of the demo run seeded into a new account, so the first sign-in
+    # isn't an empty page. Owned and deletable like any other run.
+    is_sample: bool = False
     pages: list[PageResult]
 
 

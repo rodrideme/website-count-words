@@ -82,6 +82,10 @@
         <input type="text" id="recrawl-language" class="language-input" placeholder="Language (auto)" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to auto-detect the starting page's language.">
         <button type="submit" id="recrawl-btn" class="secondary">Re-crawl</button>
       </form>
+      {% if mode != "shared" %}
+      {# Kept away from the header actions on purpose — this one can't be undone. #}
+      <button type="button" id="delete-btn" class="danger-outline" style="display:none;">Delete run</button>
+      {% endif %}
     </div>
 
     <div class="estimate-panel" id="queued-panel" style="display:none;">
