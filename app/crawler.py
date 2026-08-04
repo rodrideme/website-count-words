@@ -147,8 +147,12 @@ _ISO_639_1_CODES = {
 
 def _lang_code(segment: str) -> str:
     """Normalizes a locale-shaped segment to its base language code,
-    e.g. "pt-BR" / "pt_BR" -> "pt"."""
-    return segment.lower().split("-")[0].split("_")[0]
+    e.g. "pt-BR" / "pt_BR" -> "pt".
+
+    Strips first: the field asks for "en, pt, es", and without this the space
+    rode along into the keep set as " pt", which then matched no path segment
+    at all — so every language after the first was silently dropped."""
+    return segment.strip().lower().split("-")[0].split("_")[0]
 
 
 def _looks_like_language_segment(segment: str) -> bool:

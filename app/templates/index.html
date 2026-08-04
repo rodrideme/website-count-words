@@ -13,7 +13,11 @@
         <option value="subdomain_only">This subdomain only</option>
         <option value="top_domain_only">Top-level domain only</option>
       </select>
-      <input type="text" id="language" class="language-input" placeholder="Primary language (auto)" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to auto-detect the starting page's language. Comma-separate multiple codes to keep more than one (e.g. en, pt, es).">
+      {# Hidden for now, not removed: the field, its URL-based suggestion and
+         the server-side filter all still work, so unhiding is deleting one
+         attribute. Language still applies either way — with nothing entered
+         the crawler restricts to the starting page's own declared language. #}
+      <input type="text" id="language" class="language-input" hidden placeholder="Primary language (auto)" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to auto-detect the starting page's language. Comma-separate multiple codes to keep more than one (e.g. en, pt, es).">
       <button type="submit" id="submit-btn">Crawl</button>
     </form>
     <p class="field-error" id="form-error" style="display:none;"></p>

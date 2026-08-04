@@ -79,7 +79,8 @@
           <option value="subdomain_only">This subdomain only</option>
           <option value="top_domain_only">Top-level domain only</option>
         </select>
-        <input type="text" id="recrawl-language" class="language-input" placeholder="Language (auto)" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to auto-detect the starting page's language.">
+        {# Hidden alongside the one on the home form — see index.html. #}
+        <input type="text" id="recrawl-language" class="language-input" hidden placeholder="Language (auto)" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to auto-detect the starting page's language.">
         <button type="submit" id="recrawl-btn" class="secondary">Re-crawl</button>
       </form>
       {% if mode != "shared" %}

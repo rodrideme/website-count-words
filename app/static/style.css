@@ -26,6 +26,10 @@
 
 * { box-sizing: border-box; }
 
+/* `hidden` has to beat the sizing rules on form controls that set their own
+   width/height — without this the attribute is silently ignored on them. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
