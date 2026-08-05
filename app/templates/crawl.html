@@ -7,10 +7,9 @@
       <h1>{{ source_url }}</h1>
       <div class="header-actions">
         <button type="button" id="export-csv-btn" class="secondary">Export CSV</button>
-        {% if mode != "shared" %}
-        {# Owner-only: this is a large download and shouldn't be exposed on a public link. #}
+        {# Shown on a shared report too — it's one of the report's exports, and
+           withholding it there made a shared link only half the report. #}
         <button type="button" id="markdown-btn" class="secondary" style="display:none;"></button>
-        {% endif %}
         <button type="button" id="print-btn" class="secondary">Print report</button>
         {% if mode != "shared" %}
         <button type="button" id="share-btn">

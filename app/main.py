@@ -374,12 +374,12 @@ async def export_csv(run_id: str, user: User | None = Depends(get_current_user))
 
 
 @app.get("/crawl/{run_id}/markdown.zip")
-async def export_markdown(run_id: str, user: User = Depends(require_user_api)):
-    """Deliberately owner-only, not _readable_run — that would let anyone with a
-    public /share link pull hundreds of MB of egress on the owner's behalf."""
-    run = await db.get_run(run_id)
-    if run is None or run.user_id != user.id:
-        raise HTTPException(status_code=404, detail="Crawl not found")
+async def export_markdown(run_id: str, user: User | None = Depends(get_current_user)):
+    """Readable by the owner or through a live public link, matching Export CSV
+    and the report itself — a shared report that withholds half its exports
+    isn't really shared. Worth knowing this is the app's one large download, so
+    a public link is also a standing egress cost until it's switched off."""
+    run = await _readable_run(run_id, user)
     if not run.markdown_pages:
         raise HTTPException(status_code=404, detail="No Markdown was saved for this crawl")
 
