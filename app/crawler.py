@@ -295,6 +295,38 @@ def _check_markdown_budget(job) -> None:
         job.markdown_state = "error"
 
 
+def _recovered_resume_state(job) -> dict | None:
+    """Puts back the URLs crawl4ai's own resume snapshot drops.
+
+    BFSDeepCrawlStrategy marks an entire level visited before it fetches any of
+    it, but the snapshot's "pending" only ever carries the NEXT level. Stop
+    mid-level — which is exactly what the estimate pause does — and every URL in
+    the current level that hadn't been fetched yet is both marked visited and
+    missing from pending, so a resume never looks at it again.
+
+    On a well interlinked site the next level is usually empty as well (every
+    link already visited), so pending comes back as [], the resumed crawl starts
+    with an empty frontier, and it finishes instantly having crawled nothing.
+    That's the bug where "Proceed with crawl" appeared to complete immediately.
+
+    Anything visited that produced no result is therefore restored to pending.
+    """
+    state = job.resume_state
+    if not state:
+        return None
+    pending = list(state.get("pending") or [])
+    queued = {item.get("url") for item in pending}
+    fetched = set(job.pages) | set(job.login_blocked)
+    recovered = [
+        {"url": url, "parent_url": None}
+        for url in state.get("visited") or []
+        if url not in fetched and url not in queued
+    ]
+    if not recovered:
+        return state
+    return {**state, "pending": pending + recovered}
+
+
 async def _checkpoint(job, languages: list[str]) -> None:
     # Persists progress mid-crawl (not just at the end) so a server crash
     # can auto-resume from here instead of losing everything — see
@@ -312,7 +344,7 @@ async def _checkpoint(job, languages: list[str]) -> None:
         domain_scope=job.domain_scope,
         language=",".join(languages) if languages else None,
         language_auto_detected=job.detected_language is not None,
-        resume_state=job.resume_state,
+        resume_state=_recovered_resume_state(job),
         capture_markdown=job.capture_markdown,
         markdown_pages=job.markdown_pages,
         markdown_bytes=job.markdown_bytes,
@@ -559,6 +591,9 @@ async def _resolve_terminal_status(job, pause_at_words: int | None, url: str, fi
         # skipped entirely and it's just a normal completion, exact rather
         # than estimated.
         job.status = "paused"
+        # Repaired before anything reads it: /resume takes resume_state straight
+        # off the job, and the final save_run below persists whatever is here.
+        job.resume_state = _recovered_resume_state(job)
         job.estimate_result = await _build_estimate_result(job, url, filters)
         await db.save_estimate_snapshot(job.id, job.source_url, job.estimate_result)
     else:
