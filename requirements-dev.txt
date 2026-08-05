@@ -1,0 +1,4 @@
+# Test-only dependencies. Not installed in the Docker image — see Dockerfile,
+# which installs requirements.txt alone.
+-r requirements.txt
+pytest

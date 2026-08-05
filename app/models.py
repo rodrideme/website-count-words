@@ -41,6 +41,12 @@ class RunRecord(BaseModel):
     # A copy of the demo run seeded into a new account, so the first sign-in
     # isn't an empty page. Owned and deletable like any other run.
     is_sample: bool = False
+    # Saved page Markdown. Files live on disk keyed by run id, never in
+    # pages_json — see app/markdown_store.py.
+    capture_markdown: bool = False
+    markdown_pages: int = 0
+    markdown_bytes: int = 0
+    markdown_state: str = "off"
     pages: list[PageResult]
 
 
@@ -49,6 +55,7 @@ class CrawlRequest(BaseModel):
     domain_scope: Literal["all", "subdomain_only", "top_domain_only"] = "all"
     language: str | None = None
     force_recrawl: bool = False
+    capture_markdown: bool = False
 
 
 class ShareEmailRequest(BaseModel):

@@ -19,7 +19,7 @@
         <thead>
           <tr>
             <th>Site</th><th>Owner</th><th class="col-left">Status</th><th>Started</th>
-            <th class="col-num">Pages</th><th class="col-num">Words</th><th></th>
+            <th class="col-num">Pages</th><th class="col-num">Words</th><th class="col-num">MD</th><th></th>
           </tr>
         </thead>
         <tbody>
@@ -31,10 +31,11 @@
             <td class="run-date run-date-iso" data-iso="{{ run.created_at }}"></td>
             <td class="words-cell">{{ "{:,}".format(run.page_count) }}</td>
             <td class="words-cell">{{ "{:,}".format(run.total_words) }}</td>
+            <td class="words-cell" title="Saved Markdown on disk">{{ (run.markdown_bytes // 1048576) ~ " MB" if run.markdown_bytes else "—" }}</td>
             <td class="open-cell"><a href="/crawl/{{ run.id }}">Open ↗</a></td>
           </tr>
           {% else %}
-          <tr><td colspan="7" class="muted">{% if query %}No runs match that search.{% else %}No runs saved yet.{% endif %}</td></tr>
+          <tr><td colspan="8" class="muted">{% if query %}No runs match that search.{% else %}No runs saved yet.{% endif %}</td></tr>
           {% endfor %}
         </tbody>
       </table>

@@ -194,6 +194,19 @@ button.danger-outline {
 }
 button.danger-outline:hover { border-color: var(--danger-text); background: var(--card); }
 
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.checkbox-label input { accent-color: var(--brand); width: 15px; height: 15px; cursor: pointer; }
+.checkbox-label:hover { color: var(--text); }
+
 .field-error { color: var(--danger-text); font-size: 0.9rem; margin-top: 0.5rem; }
 
 .google-btn {
@@ -375,8 +388,15 @@ ul.recent-runs a.run-row:hover { background: #FCFBF8; text-decoration: none; }
 .header-actions {
   display: flex;
   align-items: center;
+  /* Wraps: the Markdown download makes a fourth button here, which is more
+     than fits beside a long URL on a narrow screen. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
-  flex-shrink: 0;
+  /* Deliberately shrinkable: with flex-shrink:0 the row kept its full natural
+     width, so flex-wrap above could never take effect and the buttons ran off
+     the side of narrow screens instead. */
+  min-width: 0;
   margin-top: 8px;
 }
 .header-actions #share-btn { gap: 9px; height: 38px; padding: 0 20px; font-size: 13px; }
@@ -412,11 +432,29 @@ ul.recent-runs a.run-row:hover { background: #FCFBF8; text-decoration: none; }
   -webkit-backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
   margin-top: 20px;
-  display: grid;
-  grid-template-columns: auto 1fr 1fr 1fr 1fr;
-  gap: 32px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 20px;
   align-items: center;
   padding: 14px 32px;
+}
+/* Flex rather than fixed grid columns: the Markdown card only appears on some
+   runs, and a 5-column grid dropped it onto a row of its own. The wrap is a
+   genuine fallback for narrow screens, not the desktop layout — the tightened
+   gap and padding below are what keep six cards on one row at the 1060px the
+   report is capped to. */
+.totals-bar .stat-card { flex: 1 1 0; min-width: 0; }
+.totals-bar .stat-card:first-child { flex: 0 0 auto; }
+.totals-bar .stat-card { padding-left: 18px; }
+.totals-bar .stat-card .big { font-size: 21px; letter-spacing: -0.5px; }
+
+@media (max-width: 760px) {
+  /* Below this the six cards genuinely can't share a row — wrap them two-up
+     rather than letting the unbreakable numbers push the page sideways. */
+  .totals-bar { padding: 14px 20px; }
+  .totals-bar .stat-card { flex: 1 1 40%; }
+  .totals-bar .stat-card:first-child { flex: 1 1 40%; }
+  .totals-bar .stat-card:nth-child(odd) { border-left: none; padding-left: 0; }
 }
 .stat-card {
   display: flex;

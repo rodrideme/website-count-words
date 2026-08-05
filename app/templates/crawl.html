@@ -7,6 +7,10 @@
       <h1>{{ source_url }}</h1>
       <div class="header-actions">
         <button type="button" id="export-csv-btn" class="secondary">Export CSV</button>
+        {% if mode != "shared" %}
+        {# Owner-only: this is a large download and shouldn't be exposed on a public link. #}
+        <button type="button" id="markdown-btn" class="secondary" style="display:none;"></button>
+        {% endif %}
         <button type="button" id="print-btn" class="secondary">Print report</button>
         {% if mode != "shared" %}
         <button type="button" id="share-btn">
@@ -54,6 +58,11 @@
       <div class="muted">Blocked · host</div>
       <div class="big" id="blocked-host-count">0</div>
     </div>
+    <div class="stat-card" id="markdown-stat" style="display:none;" title="Page Markdown saved for this crawl — main content only, downloadable as a ZIP.">
+      <div class="muted">Markdown saved</div>
+      <div class="big" id="markdown-size">0</div>
+      <div class="muted" id="markdown-pages"></div>
+    </div>
   </div>
 
   <div class="report-wrap report-body">
@@ -68,6 +77,7 @@
       <ul id="page-issues-list" class="issues-list"></ul>
     </details>
     <p class="note" id="try-different-page-note" style="display:none;">Nothing could be counted because the starting page itself couldn't be accessed. If you know another page on this site that might be more accessible (e.g. a blog post or inner page rather than the homepage), try starting the crawl from that URL instead.</p>
+    <p class="note" id="markdown-note" style="display:none;"></p>
     <p class="error-box" id="error-box" style="display:none;"></p>
 
     <div class="action-row" id="action-row">
@@ -81,6 +91,9 @@
         </select>
         {# Hidden alongside the one on the home form — see index.html. #}
         <input type="text" id="recrawl-language" class="language-input" hidden placeholder="Language (auto)" title="Only crawl this language's pages, for sites with a /en/, /fr/, ... path per language. Leave blank to auto-detect the starting page's language.">
+        <label class="checkbox-label" title="Save each page's main content as Markdown, downloadable as a ZIP when the crawl finishes.">
+          <input type="checkbox" id="recrawl-markdown"> Save Markdown
+        </label>
         <button type="submit" id="recrawl-btn" class="secondary">Re-crawl</button>
       </form>
       {% if mode != "shared" %}
@@ -251,6 +264,8 @@
       languageSetting: {{ run.language | tojson }},
       languageAutoDetected: {{ run.language_auto_detected | tojson }},
       initialIsPublic: {{ run.is_public | tojson }},
+      initialMarkdown: {{ {"enabled": run.capture_markdown, "pages": run.markdown_pages,
+                           "bytes": run.markdown_bytes, "state": run.markdown_state} | tojson }},
       {% endif %}
     });
   </script>

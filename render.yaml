@@ -24,7 +24,19 @@ services:
         value: https://wordcounter.wxrks.app
       - key: ADMIN_EMAILS
         sync: false
+      # Saved page Markdown, under DB_PATH's directory unless overridden.
+      # Capture stops on its own before the volume gets tight — the database
+      # lives on the same disk, so filling it would take the whole app down.
+      - key: MARKDOWN_MAX_RUN_MB
+        value: "300"
+      - key: MARKDOWN_MAX_TOTAL_MB
+        value: "6000"
+      - key: MARKDOWN_DISK_FLOOR_MB
+        value: "512"
     disk:
       name: wordcounter-data
       mountPath: /var/data
-      sizeGB: 1
+      # Shared by the SQLite database and saved Markdown. Markdown for a single
+      # very large crawl is ~600-700MB, so 1GB could not hold one. Render disks
+      # can be grown later but never shrunk.
+      sizeGB: 10

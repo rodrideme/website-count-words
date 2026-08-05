@@ -50,7 +50,10 @@ function initHomeForm() {
       const res = await fetch("/crawl", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, domain_scope: domainScope, language }),
+        body: JSON.stringify({
+          url, domain_scope: domainScope, language,
+          capture_markdown: document.getElementById("capture-markdown").checked,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -129,6 +132,14 @@ function formatRunDates() {
   for (const el of document.querySelectorAll(".run-date-iso")) {
     el.textContent = formatDate(el.dataset.iso);
   }
+}
+
+function formatBytes(bytes) {
+  if (!bytes) return "0 MB";
+  const mb = bytes / 1048576;
+  if (mb < 1) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  if (mb < 1024) return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
 }
 
 function formatDuration(totalSeconds) {
@@ -495,6 +506,11 @@ function initCrawlPage(opts) {
   const emailNoticeLabel = document.getElementById("email-notice-label");
 
   const pageMore = document.getElementById("page-more");
+  const markdownStat = document.getElementById("markdown-stat");
+  const markdownSizeEl = document.getElementById("markdown-size");
+  const markdownPagesEl = document.getElementById("markdown-pages");
+  const markdownBtn = document.getElementById("markdown-btn");
+  const markdownNote = document.getElementById("markdown-note");
   const pageIssuesNote = document.getElementById("page-issues-note");
   const pageIssuesDetails = document.getElementById("page-issues-details");
   const pageIssuesList = document.getElementById("page-issues-list");
@@ -701,6 +717,46 @@ function initCrawlPage(opts) {
     pageIssuesDetails.style.display = "block";
   };
 
+  const MARKDOWN_STOP_REASONS = {
+    stopped_run_cap: "the per-crawl size limit was reached",
+    stopped_disk: "the server was running low on disk space",
+    stopped_global_cap: "the server's total Markdown limit was reached",
+    error: "of an error while saving",
+  };
+
+  // `terminal` gates the download: mid-crawl the archive would be a moving
+  // target, and the button carries the size so the weight is known before the
+  // click rather than after it starts.
+  const applyMarkdown = (md, terminal) => {
+    if (!md || !md.enabled) return;
+    markdownStat.style.display = "";
+    markdownSizeEl.textContent = formatBytes(md.bytes);
+    markdownPagesEl.textContent = `${md.pages.toLocaleString("en-US")} pages`;
+
+    if (markdownBtn) {
+      markdownBtn.style.display = md.pages ? "" : "none";
+      markdownBtn.disabled = !terminal;
+      markdownBtn.textContent = terminal
+        ? `Download Markdown · ${formatBytes(md.bytes)}`
+        : "Download Markdown";
+      markdownBtn.title = terminal ? "" : "Available when the crawl finishes";
+    }
+
+    const reason = MARKDOWN_STOP_REASONS[md.state];
+    if (reason && terminal) {
+      markdownNote.textContent =
+        `Markdown was saved for the first ${md.pages.toLocaleString("en-US")} pages, then stopped because ` +
+        `${reason}. The word count below is complete either way.`;
+      markdownNote.style.display = "block";
+    }
+  };
+
+  if (markdownBtn) {
+    markdownBtn.addEventListener("click", () => {
+      window.location.href = `/crawl/${opts.runId}/markdown.zip`;
+    });
+  }
+
   const initPagePaging = (total, shown) => {
     let loaded = shown;
     const note = document.getElementById("page-more-note");
@@ -779,6 +835,7 @@ function initCrawlPage(opts) {
         domain_scope: recrawlDomainScopeSelect.value,
         language: recrawlLanguageInput.value.trim() || null,
         force_recrawl: true,
+        capture_markdown: document.getElementById("recrawl-markdown").checked,
       }),
     });
     const data = await res.json();
@@ -938,6 +995,7 @@ function initCrawlPage(opts) {
     const initialPages = opts.initialPages || [];
     for (const page of initialPages) renderPageRow(tbody, page, true);
     applyIssueSummary(opts.summary);
+    applyMarkdown(opts.initialMarkdown, true);
     renderServerSummary(opts.summary);
     initPagePaging(opts.summary.total_pages, initialPages.length);
     return;
@@ -964,6 +1022,7 @@ function initCrawlPage(opts) {
       cancelNote.textContent = data.stopped_reason || "This crawl was cancelled — showing partial results.";
       cancelNote.style.display = "block";
     }
+    applyMarkdown(data.markdown, TERMINAL_STATUSES.includes(data.status));
     if (TERMINAL_STATUSES.includes(data.status)) {
       cancelBtn.style.display = "none";
       queuedPanel.style.display = "none";
@@ -1037,6 +1096,9 @@ function initCrawlPage(opts) {
       totalWordsEl.textContent = data.total_words.toLocaleString("en-US");
       updatePageCount(pages.length);
       updateBlockedHostCount(pages);
+      if (data.markdown_bytes !== undefined) {
+        applyMarkdown({ enabled: true, bytes: data.markdown_bytes, pages: data.markdown_pages, state: "capturing" }, false);
+      }
     });
 
     source.addEventListener("login_blocked", (evt) => {

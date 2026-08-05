@@ -8,6 +8,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import aiosqlite
 
+from app import markdown_store
 from app.models import PageResult, RunRecord, User
 
 DB_PATH = Path(os.environ.get("DB_PATH", "data/wordcount.db"))
@@ -122,6 +123,17 @@ async def _ensure_columns() -> None:
     if "is_sample" not in existing:
         await conn.execute("ALTER TABLE runs ADD COLUMN is_sample INTEGER NOT NULL DEFAULT 0")
         await conn.commit()
+    for column, ddl in [
+        # Whether this run was asked to save page Markdown, persisted so a
+        # crash-resumed crawl carries on capturing instead of silently stopping.
+        ("capture_markdown", "ALTER TABLE runs ADD COLUMN capture_markdown INTEGER NOT NULL DEFAULT 0"),
+        ("markdown_pages", "ALTER TABLE runs ADD COLUMN markdown_pages INTEGER NOT NULL DEFAULT 0"),
+        ("markdown_bytes", "ALTER TABLE runs ADD COLUMN markdown_bytes INTEGER NOT NULL DEFAULT 0"),
+        ("markdown_state", "ALTER TABLE runs ADD COLUMN markdown_state TEXT NOT NULL DEFAULT 'off'"),
+    ]:
+        if column not in existing:
+            await conn.execute(ddl)
+            await conn.commit()
 
     cur = await conn.execute("PRAGMA table_info(estimate_history)")
     existing_estimate_cols = {row["name"] for row in await cur.fetchall()}
@@ -197,6 +209,10 @@ def _row_to_run(row: aiosqlite.Row) -> RunRecord:
         resume_state=json.loads(resume_state_json) if resume_state_json else None,
         is_public=bool(row["is_public"]),
         is_sample=bool(row["is_sample"]),
+        capture_markdown=bool(row["capture_markdown"]),
+        markdown_pages=row["markdown_pages"],
+        markdown_bytes=row["markdown_bytes"],
+        markdown_state=row["markdown_state"],
         pages=pages,
     )
 
@@ -270,6 +286,10 @@ async def save_run(
     language: str | None = None,
     language_auto_detected: bool = False,
     resume_state: dict | None = None,
+    capture_markdown: bool = False,
+    markdown_pages: int = 0,
+    markdown_bytes: int = 0,
+    markdown_state: str = "off",
 ) -> None:
     conn = _conn()
     now = datetime.now(timezone.utc).isoformat()
@@ -279,8 +299,9 @@ async def save_run(
         """
         INSERT INTO runs
             (id, source_url, user_id, created_at, status, total_words, page_count, limit_reached,
-             login_blocked_count, domain_scope, language, language_auto_detected, resume_state_json, pages_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             login_blocked_count, domain_scope, language, language_auto_detected, resume_state_json, pages_json,
+             capture_markdown, markdown_pages, markdown_bytes, markdown_state)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             status=excluded.status,
             total_words=excluded.total_words,
@@ -291,13 +312,18 @@ async def save_run(
             language=excluded.language,
             language_auto_detected=excluded.language_auto_detected,
             resume_state_json=excluded.resume_state_json,
-            pages_json=excluded.pages_json
+            pages_json=excluded.pages_json,
+            capture_markdown=excluded.capture_markdown,
+            markdown_pages=excluded.markdown_pages,
+            markdown_bytes=excluded.markdown_bytes,
+            markdown_state=excluded.markdown_state
         """,
         (
             # created_at is only ever set on first insert (see ON CONFLICT above) —
             # periodic checkpointing during a crawl must not keep bumping it forward.
             run_id, source_url, user_id, now, status, total_words, len(pages), int(limit_reached),
             login_blocked_count, domain_scope, language, int(language_auto_detected), resume_state_json, pages_json,
+            int(capture_markdown), markdown_pages, markdown_bytes, markdown_state,
         ),
     )
     await conn.commit()
@@ -424,7 +450,8 @@ async def list_estimate_history() -> list[dict]:
 # Listing screens show one line per run and never touch the page rows, so they
 # deliberately avoid pages_json — parsing it for every run is what would make
 # "all runs" expensive on an account (or a server) with a lot of history.
-_RUN_SUMMARY_COLUMNS = "id, source_url, created_at, status, total_words, page_count, is_public, is_sample"
+_RUN_SUMMARY_COLUMNS = ("id, source_url, created_at, status, total_words, page_count, is_public, is_sample,"
+                        " markdown_pages, markdown_bytes")
 
 
 def _row_to_run_summary(row: aiosqlite.Row) -> dict:
@@ -437,6 +464,8 @@ def _row_to_run_summary(row: aiosqlite.Row) -> dict:
         "page_count": row["page_count"],
         "is_public": bool(row["is_public"]),
         "is_sample": bool(row["is_sample"]),
+        "markdown_pages": row["markdown_pages"],
+        "markdown_bytes": row["markdown_bytes"],
     }
     if "owner_email" in row.keys():
         summary["owner_email"] = row["owner_email"]
@@ -452,9 +481,14 @@ async def delete_run(run_id: str) -> None:
     await conn.execute("DELETE FROM run_shares WHERE run_id = ?", (run_id,))
     await conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
     await conn.commit()
+    markdown_store.delete(run_id)
 
 
 async def copy_run_to_user(run: RunRecord, user_id: int, run_id: str, as_sample: bool = False) -> None:
+    """Note the markdown_* columns are deliberately absent from the INSERT below,
+    so the copy takes their defaults. Stored Markdown is keyed by run id on disk
+    and is not copied — inheriting the counts would give the new run a download
+    button pointing at another run's files."""
     conn = _conn()
     now = datetime.now(timezone.utc).isoformat()
     await conn.execute(
@@ -470,6 +504,14 @@ async def copy_run_to_user(run: RunRecord, user_id: int, run_id: str, as_sample:
         ),
     )
     await conn.commit()
+
+
+async def get_run_exists(run_id: str) -> bool:
+    """Existence only — deliberately not get_run(), which parses the whole
+    pages_json blob just to answer this."""
+    conn = _conn()
+    async with conn.execute("SELECT 1 FROM runs WHERE id = ?", (run_id,)) as cur:
+        return await cur.fetchone() is not None
 
 
 async def count_user_runs(user_id: int) -> int:

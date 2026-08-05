@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import time
@@ -21,11 +22,13 @@ from crawl4ai.deep_crawling import BFSDeepCrawlStrategy
 from crawl4ai.deep_crawling.filters import DomainFilter, FilterChain, URLFilter
 from crawl4ai.utils import get_base_domain
 
-from app import db
+from app import db, markdown_store
 from app.job_store import dequeue_next, get_job, list_active_jobs
 from app.models import PageResult
 from app.notifications import send_crawl_notification
 from app.word_count import count_words
+
+logger = logging.getLogger(__name__)
 
 
 def _markdown_text(result) -> str:
@@ -40,6 +43,25 @@ def _markdown_text(result) -> str:
     if fit and not fit.startswith("Error generating fit markdown"):
         return fit
     return getattr(markdown, "raw_markdown", None) or ""
+
+
+def _markdown_for_storage(result) -> str:
+    """The Markdown to save for a page — main content only.
+
+    Deliberately separate from _markdown_text() above, which feeds the word
+    count. That one looks like it prefers fit_markdown but never does:
+    result.markdown is a str subclass, so its isinstance() check always wins and
+    every count to date is raw_markdown-based. Fixing it there would change what
+    every future crawl counts and break comparability with saved runs, so this
+    reads fit_markdown directly and leaves counting exactly as it was.
+    """
+    markdown = getattr(result, "markdown", None)
+    if markdown is None:
+        return ""
+    fit = getattr(markdown, "fit_markdown", None)
+    if fit and not fit.startswith("Error generating fit markdown"):
+        return fit
+    return getattr(markdown, "raw_markdown", None) or str(markdown)
 
 
 _IMAGE_MARKDOWN_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
@@ -234,10 +256,50 @@ def _memory_exceeded() -> bool:
     return _process.memory_info().rss >= _MEMORY_LIMIT_BYTES
 
 
+def _capture_markdown(job, result) -> None:
+    """Saves one page's Markdown, if this run asked for it.
+
+    Every failure mode here is non-fatal by design: the crawl has already done
+    the expensive part, and losing a word count because a disk filled up would
+    be a far worse outcome than losing the Markdown. Any problem stops capture
+    for the rest of the run and leaves the crawl completely untouched.
+    """
+    if not job.capture_markdown or job.markdown_state != "capturing":
+        return
+    try:
+        if job.markdown_bytes >= markdown_store.MAX_RUN_BYTES:
+            job.markdown_state = "stopped_run_cap"
+            return
+        text = _markdown_for_storage(result)
+        if not text:
+            return
+        job.markdown_bytes += markdown_store.write(job.id, result.url, text)
+        job.markdown_pages += 1
+    except Exception:
+        logger.exception("Markdown capture failed for %s — continuing the crawl without it", result.url)
+        job.markdown_state = "error"
+
+
+def _check_markdown_budget(job) -> None:
+    """Called at checkpoints rather than per page — disk_usage and a full-tree
+    size are far too expensive to run every result."""
+    if job.markdown_state != "capturing":
+        return
+    try:
+        if markdown_store.disk_is_tight():
+            job.markdown_state = "stopped_disk"
+        elif markdown_store.total_bytes() >= markdown_store.MAX_TOTAL_BYTES:
+            job.markdown_state = "stopped_global_cap"
+    except Exception:
+        logger.exception("Could not check the Markdown budget — stopping capture for this run")
+        job.markdown_state = "error"
+
+
 async def _checkpoint(job, languages: list[str]) -> None:
     # Persists progress mid-crawl (not just at the end) so a server crash
     # can auto-resume from here instead of losing everything — see
     # app.main's startup scan of db.get_crawling_runs().
+    _check_markdown_budget(job)
     await db.save_run(
         run_id=job.id,
         source_url=job.source_url,
@@ -251,6 +313,10 @@ async def _checkpoint(job, languages: list[str]) -> None:
         language=",".join(languages) if languages else None,
         language_auto_detected=job.detected_language is not None,
         resume_state=job.resume_state,
+        capture_markdown=job.capture_markdown,
+        markdown_pages=job.markdown_pages,
+        markdown_bytes=job.markdown_bytes,
+        markdown_state=job.markdown_state,
     )
 
 
@@ -550,10 +616,18 @@ async def run_crawl(
     language: str | None = None,
     pause_at_words: int | None = None,
     resume_state: dict | None = None,
+    capture_markdown: bool = False,
 ) -> None:
     job = get_job(job_id)
     if job is None:
         return
+
+    # Resolved once here rather than per page: a run that starts with the disk
+    # already tight never begins capturing, instead of writing a handful of
+    # pages and stopping at the first checkpoint.
+    job.capture_markdown = capture_markdown or job.capture_markdown
+    if job.capture_markdown and job.markdown_state in ("off", "capturing"):
+        job.markdown_state = "stopped_disk" if markdown_store.disk_is_tight() else "capturing" 
 
     job.status = "crawling"
     job.domain_scope = domain_scope
@@ -758,6 +832,7 @@ async def run_crawl(
                     word_count = count_words(text)
                     page = PageResult(url=result.url, title=title, word_count=word_count, success=True)
                     job.total_words += word_count
+                    _capture_markdown(job, result)
                     for name, weight in _detect_cms_signals(result).items():
                         job.cms_match_counts[name] = job.cms_match_counts.get(name, 0) + weight
                 else:
@@ -784,6 +859,8 @@ async def run_crawl(
                         "type": "page",
                         "page": page.model_dump(),
                         "total_words": job.total_words,
+                        "markdown_bytes": job.markdown_bytes,
+                        "markdown_pages": job.markdown_pages,
                     }
                 )
 
@@ -853,6 +930,10 @@ async def run_crawl(
             language=",".join(languages) if languages else None,
             language_auto_detected=job.detected_language is not None,
             resume_state=job.resume_state,
+            capture_markdown=job.capture_markdown,
+            markdown_pages=job.markdown_pages,
+            markdown_bytes=job.markdown_bytes,
+            markdown_state=job.markdown_state,
         )
 
         if job.status == "completed":

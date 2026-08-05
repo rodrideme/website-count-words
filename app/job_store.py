@@ -46,6 +46,14 @@ class Job:
     # crash happened before the specific login-blocked URLs were persisted,
     # just their count, so it's tracked separately from the live dict above.
     restored_login_blocked_count: int = 0
+    # Saved page Markdown. Only counters live here — the content itself goes
+    # straight to disk (app/markdown_store.py), because holding it would grow
+    # RSS against the ceiling that cancels crawls.
+    capture_markdown: bool = False
+    markdown_pages: int = 0
+    markdown_bytes: int = 0
+    # off | capturing | stopped_disk | stopped_run_cap | stopped_global_cap | error
+    markdown_state: str = "off"
     # Per-CMS weighted hit tally accumulated across pages (see crawler.py's
     # _detect_cms_signals/_resolve_detected_cms) — not persisted across a
     # crash/resume; low-stakes enough to just start over on that rare path.
@@ -92,6 +100,12 @@ class Job:
             "estimate_result": self.estimate_result,
             "stopped_reason": self.stopped_reason,
             "queue_position": (QUEUE.index(self.id) + 1) if self.id in QUEUE else None,
+            "markdown": {
+                "enabled": self.capture_markdown,
+                "pages": self.markdown_pages,
+                "bytes": self.markdown_bytes,
+                "state": self.markdown_state,
+            },
         }
 
 
@@ -159,6 +173,12 @@ def restore_job(run, estimate_result: dict | None = None) -> Job:
         resume_state=run.resume_state,
         restored_login_blocked_count=run.login_blocked_count,
         estimate_result=estimate_result,
+        # Carried across the restart so a resumed crawl keeps capturing instead
+        # of silently producing a ZIP that stops at the crash point.
+        capture_markdown=run.capture_markdown,
+        markdown_pages=run.markdown_pages,
+        markdown_bytes=run.markdown_bytes,
+        markdown_state=run.markdown_state,
     )
     JOBS[job.id] = job
     return job

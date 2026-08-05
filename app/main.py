@@ -4,6 +4,7 @@ import asyncio
 import csv
 import io
 import json
+import logging
 import math
 import os
 from contextlib import asynccontextmanager
@@ -18,13 +19,15 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import auth, db, report
+from app import auth, db, markdown_store, report
 from app.auth import get_current_user, require_admin, require_user, require_user_api
 from app.crawler import MAX_CONCURRENT_CRAWLS, PAUSE_AT_WORDS, estimate_result_from_snapshot, run_crawl
 from app.job_store import create_job, enqueue, get_job, list_active_jobs, list_queued_jobs, restore_job
 from app.models import CrawlRequest, ShareEmailRequest, ShareToggleRequest, User
 from app.notifications import absolute_url, remember_origin, send_share_notification
 from app.templates import templates
+
+logger = logging.getLogger(__name__)
 
 _TERMINAL_STATUSES = ("completed", "failed", "cancelled", "paused")
 # Terminal *and* not resumable — these have nothing left to stream, so the
@@ -59,6 +62,18 @@ async def lifespan(app: FastAPI):
         snapshot = await db.get_estimate_snapshot(run.id)
         estimate_result = estimate_result_from_snapshot(snapshot) if snapshot else None
         restore_job(run, estimate_result=estimate_result)
+
+    # Saved Markdown outlives its run if a delete didn't get to unlink it (a
+    # crash mid-delete, or a database restored from a backup). Left alone it
+    # would sit on the same volume as the database forever.
+    try:
+        for run_id in markdown_store.existing_run_ids():
+            if await db.get_run_exists(run_id):
+                continue
+            logger.info("Removing saved Markdown for run %s, which no longer exists", run_id)
+            markdown_store.delete(run_id)
+    except Exception:
+        logger.exception("Markdown orphan sweep failed")
 
     yield
     await db.close_db()
@@ -146,7 +161,10 @@ async def start_crawl(payload: CrawlRequest, user: User = Depends(require_user_a
 
     if not payload.force_recrawl:
         cached = await db.get_latest_run(source_url)
-        if cached is not None:
+        # Reusing a cached run is only right if it can answer what was asked.
+        # Someone who ticked "save Markdown" must not be handed an older run
+        # that has none — that would look like the setting silently did nothing.
+        if cached is not None and (not payload.capture_markdown or cached.markdown_pages > 0):
             return JSONResponse({"cached": True, "run_id": cached.id})
 
     # Checked before create_job() below adds itself to JOBS — otherwise the
@@ -161,6 +179,10 @@ async def start_crawl(payload: CrawlRequest, user: User = Depends(require_user_a
     # values to launch with later.
     job.domain_scope = payload.domain_scope
     job.language_setting = payload.language
+    # Set here rather than only passed to run_crawl below, because a queued job
+    # is started later by _maybe_start_next_queued, which has no payload — the
+    # other resume paths read it off the job for the same reason.
+    job.capture_markdown = payload.capture_markdown
 
     if at_capacity:
         job.status = "queued"
@@ -168,7 +190,10 @@ async def start_crawl(payload: CrawlRequest, user: User = Depends(require_user_a
         return JSONResponse({"cached": False, "run_id": job.id, "queued": True, "position": position})
 
     job.task = asyncio.create_task(
-        run_crawl(job.id, source_url, max_pages, payload.domain_scope, payload.language, pause_at_words=PAUSE_AT_WORDS)
+        run_crawl(
+            job.id, source_url, max_pages, payload.domain_scope, payload.language,
+            pause_at_words=PAUSE_AT_WORDS, capture_markdown=payload.capture_markdown,
+        )
     )
     return JSONResponse({"cached": False, "run_id": job.id})
 
@@ -345,6 +370,39 @@ async def export_csv(run_id: str, user: User | None = Depends(get_current_user))
         rows(),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{host}-word-count.csv"'},
+    )
+
+
+@app.get("/crawl/{run_id}/markdown.zip")
+async def export_markdown(run_id: str, user: User = Depends(require_user_api)):
+    """Deliberately owner-only, not _readable_run — that would let anyone with a
+    public /share link pull hundreds of MB of egress on the owner's behalf."""
+    run = await db.get_run(run_id)
+    if run is None or run.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Crawl not found")
+    if not run.markdown_pages:
+        raise HTTPException(status_code=404, detail="No Markdown was saved for this crawl")
+
+    host = (urlsplit(run.source_url).hostname or "crawl").replace("www.", "")
+    readme = "\n".join([
+        f"Word Counter — saved Markdown for {run.source_url}",
+        f"Crawled: {run.created_at}",
+        f"Pages in this archive: {run.markdown_pages:,} of {run.page_count:,} crawled",
+        "",
+        "Main page content only — site navigation, footers and other repeated",
+        "chrome are stripped. Each file starts with the URL it came from.",
+    ])
+    if run.markdown_state.startswith("stopped"):
+        readme += (
+            "\n\nCapture stopped before the end of the crawl"
+            f" ({run.markdown_state.removeprefix('stopped_')}), so this archive covers"
+            " only the pages listed above. The word count itself is complete."
+        )
+
+    return StreamingResponse(
+        markdown_store.iter_zip(run_id, [p.url for p in run.pages], readme=readme),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{host}-markdown.zip"'},
     )
 
 
